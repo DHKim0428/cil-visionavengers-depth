@@ -36,11 +36,43 @@ The data can be accessed on Kaggle
 
 
 ## Evaluation Metrics
-Your approach is evaluated according to scale-invariant Root Mean Squared Error (RMSE). See a detailed description on Kaggle.
+Your approach is evaluated according to scale-invariant Root Mean Squared Error (RMSE).
 
+### Scale-Invariant RMSE
+Scale-Invariant RMSE is a metric designed to evaluate depth estimation models by focusing on the relative differences in depth rather than the absolute scale.
+This is especially important in monocular depth estimation, where the global scale of the scene may be ambiguous.
 
+### Why Use Scale-Invariant RMSE?
+* **Relative Accuracy**:
+The metric operates in the logarithmic domain, meaning it measures errors based on the ratio of predicted to true depths. This approach emphasizes the spatial relationships and depth gradients in the image rather than penalizing a consistent scale shift.
 
+* **Robustness to Global Scale Variations**:
+A model might predict depth maps that are globally scaled versions of the ground truth. The scale-invariant RMSE minimizes the effect of such discrepancies by normalizing out the overall scale, ensuring that the error reflects the true structural differences in the scene.
 
+* **Emphasis on Scene Structure**:
+By focusing on the logarithmic differences between depth values, the metric rewards models that capture the underlying geometry and structure of everyday scenes, which is crucial for practical applications like autonomous navigation or augmented reality.
+
+### How It Works
+1. **Log Transformation**:
+Both the predicted depths and the ground truth depths are transformed using the natural logarithm.
+
+2. **Compute Differences**:
+For each pixel i, compute the difference:
+$$
+\delta_i = \log(\hat{d_i}) - \log(d_i)
+$$
+
+3. **Normalize with a Global Bias**:
+A bias term alpha is computed to minimize the overall error:
+$$
+\alpha = \frac{1}{n} \sum_{i=1}^n\left(\log(d_i)-\log(\hat{d_i})\right)
+$$
+
+4. **Error Calculation**:
+The scale-invariant RMSE is then given by:
+$$
+\text{Scale-Invariant RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^n (\delta_i+\alpha)^2}
+$$
 
 ## Report
 For the project submission, you must write a comprehensive 4-page report and submit the accompanying code. You can base your implementation and ideas on techniques not covered in class, and we encourage thorough comparisons by testing your novel approach against standard methods. Scientific rigor is valued, so please ensure your experiments are well-documented, and your findings are statistically sound.
