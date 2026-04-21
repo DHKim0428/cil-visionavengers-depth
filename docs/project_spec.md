@@ -52,40 +52,37 @@ You should compare your solution to at least two baseline algorithms. For the ba
 ### Grading of the report
 To ensure fairness we will use the same grading criteria for all reports. Your reports will be graded according to the following three criteria:
 
-1. Quality of paper (30%)
+#### 1. Quality of paper (30%)
 
-6.0: Comparable to a (workshop) submission to an international conference (features discussed in the last lecture).
+| Grade | Description |
+| --- | --- |
+| 6.0 | Comparable to a (workshop) submission to an international conference (features discussed in the last lecture). |
+| 5.5 | Background, method, and experiment are clear. May have minor issues in one or two sections. Language is good. Scores and baselines are well documented. |
+| 5.0 | Explanation of work is clear, and the reader is able to identify the novelty of the work. Minor issues in one or two sections. Minor problems with language. Has all the recommended sections in the howto-paper. |
+| 4.5 | Able to identify contributions. Major problems in the presentation of results and or ideas and or reproducibility/baselines. |
+| 4.0 | Hard to identify contribution, but still there. One or two good sections should get students a pass. |
+| 3.5 | Unable to see novelty. No comparison with any baselines. |
 
-5.5: Background, method, and experiment are clear. May have minor issues in one or two sections. Language is good. Scores and baselines are well documented.
+#### 2. Creativity of solution (20%)
 
-5.0: Explanation of work is clear, and the reader is able to identify the novelty of the work. Minor issues in one or two sections. Minor problems with language. Has all the recommended sections in the howto-paper.
+| Grade | Description |
+| --- | --- |
+| 6.0 | Elegant proposal, either making a useful assumption, studying a particular class of data, or using a novel mathematical fact. |
+| 5.5 | A non-obvious combination of ideas presented in the course or published in a paper (depending on the difficulty of that idea). |
+| 5.0 | A novel idea or combination not explicitly presented in the course. |
+| 4.5 | An idea mentioned in a published paper with small extensions/changes, but not so trivial to implement. |
+| 4.0 | A trivial idea taken from a published paper. |
 
-4.5: Able to identify contributions. Major problems in the presentation of results and or ideas and or reproducibility/baselines.
+#### 3. Quality of implementation (20%)
 
-4.0: Hard to identify contribution, but still there. One or two good sections should get students a pass.
+| Grade | Description |
+| --- | --- |
+| 6.0 | Idea is executed well. The experiments make sense in order to answer the proposed research questions. There are no obvious experiments not done that could greatly increase clarity. The submitted code and other supplementary material are understandable, commented, complete, clean and there is a README file that explains it and describes how to reproduce your results. |
 
-3.5: Unable to see novelty. No comparison with any baselines.
-
-2. Creativity of solution (20%)
-
-6.0: Elegant proposal, either making a useful assumption, studying a particular class of data, or using a novel mathematical fact.
-
-5.5: A non-obvious combination of ideas presented in the course or published in a paper (Depending on the difficulty of that idea).
-
-5.0: A novel idea or combination not explicitly presented in the course.
-
-4.5: An idea mentioned in a published paper with small extensions/changes, but not so trivial to implement.
-
-4.0: A trivial idea taken from a published paper.
-
-Quality of implementation (20%)
-
-6.0: Idea is executed well. The experiments make sense in order to answer the proposed research questions. There are no obvious experiments not done that could greatly increase clarity. The submitted code and other supplementary material are understandable, commented, complete, clean and there is a README file that explains it and describes how to reproduce your results.
-
-Subtractions from this grade will be made if
-	* the submitted code is unclear, does not run or experiments cannot be reproduced or there is no description of it
-    * experiments done are useless to gain understanding or of unclear nature or obviously useful experiments have been left undone
-    * comparison to baselines are not done
+Subtractions from this grade will be made if:
+- the submitted code is unclear, does not run, experiments cannot be reproduced, or there is no description of it
+- experiments done are useless to gain understanding, are of unclear nature, or obviously useful experiments have been left undone
+- comparison to baselines is not done
 
  
 
