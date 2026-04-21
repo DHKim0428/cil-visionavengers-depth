@@ -1,0 +1,48 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# Data and model artifacts
+data/
+datasets/
+outputs/
+results/
+checkpoints/
+models/
+artifacts/
+wandb/
+mlruns/
+
+# Local secrets / config
+.env
+.env.*
+*.key
+*.pem
+
+# Agent local memory
+AGENT_WORKBOOK.md
