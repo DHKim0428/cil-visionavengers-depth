@@ -77,7 +77,7 @@ $$
 ## Report
 For the project submission, you must write a comprehensive 4-page report and submit the accompanying code. You can base your implementation and ideas on techniques not covered in class, and we encourage thorough comparisons by testing your novel approach against standard methods. Scientific rigor is valued, so please ensure your experiments are well-documented, and your findings are statistically sound.
 
-**For instructions on how to write a scientific paper, see this PDF. The write-up must be a maximum of 4 pages long (excluding references, appendix, and declaration of originality). Please include the declaration of originality in your report.**
+**For instructions on how to write a scientific paper, see this [PDF](Writing%20Scientific%20Papers%20and%20Software.pdf). The write-up must be a maximum of 4 pages long (excluding references, appendix, and declaration of originality). Please include the [declaration of originality](Declaration%20of%20Originality.pdf) in your report.**
 
 You should compare your solution to at least two baseline algorithms. For the baselines, you can use the implementations you developed as part of the programming exercises or come up with your own relevant baselines.
 
