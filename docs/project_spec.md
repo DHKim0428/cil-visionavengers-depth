@@ -58,21 +58,21 @@ Both the predicted depths and the ground truth depths are transformed using the 
 
 2. **Compute Differences**:
 For each pixel i, compute the difference:
-$$
+```math
 \delta_i = \log(\hat{d_i}) - \log(d_i)
-$$
+```
 
 3. **Normalize with a Global Bias**:
 A bias term alpha is computed to minimize the overall error:
-$$
+```math
 \alpha = \frac{1}{n} \sum_{i=1}^n\left(\log(d_i)-\log(\hat{d_i})\right)
-$$
+```
 
 4. **Error Calculation**:
 The scale-invariant RMSE is then given by:
-$$
+```math
 \text{Scale-Invariant RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^n (\delta_i+\alpha)^2}
-$$
+```
 
 ## Report
 For the project submission, you must write a comprehensive 4-page report and submit the accompanying code. You can base your implementation and ideas on techniques not covered in class, and we encourage thorough comparisons by testing your novel approach against standard methods. Scientific rigor is valued, so please ensure your experiments are well-documented, and your findings are statistically sound.
