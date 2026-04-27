@@ -86,7 +86,7 @@ srun --pty -A cil -t 60 bash --login
 For a longer interactive allocation, use the jobs course tag:
 
 ```bash
-srun --pty -A cil_jobs -t 2:00:00 bash --login
+srun --gpus 5060ti:1 --pty -A cil_jobs -t 2:00:00 bash --login
 ```
 
 To explicitly request no GPU:
@@ -135,13 +135,26 @@ ssh cluster-tunnel
 
 This opens a shell directly on the allocated compute node, where you can run commands interactively.
 
-### GPU type notes
-By default, the cluster scheduler will choose an available GPU. Only request a specific GPU type when there is a clear reason.
+### GPU type notes & The 5060 Ti Issue
+By default, the cluster scheduler will choose an available GPU. The primary GPUs available for our use are **RTX 5060 Ti, RTX 2080 Ti, and GTX 1080 Ti**. We highly recommend using these standard GPUs for your training.
 
-The `gb10` nodes have a different architecture. They can be useful when a job needs a larger combined CPU/GPU memory budget, but they are not the default recommendation because environment compatibility and performance characteristics may differ from the regular GPU nodes.
+**1. General GPUs (RTX 2080 Ti, GTX 1080 Ti)**
+These are fully compatible with the standard course environment. To explicitly request one of these older but stable models:
+```bash
+# Request a specific model explicitly
+srun --pty -A cil --gpus 2080ti:1 -t 60 bash --login
+```
 
-Example request for a `gb10` GPU:
+**2. The New RTX 5060 Ti (`5060ti`)**
+These are the newest nodes, but their architecture (`sm_120`) is incompatible with the default PyTorch environment. **If you are allocated a 5060 Ti, you MUST use the special `monodepth-5060` Conda environment.**
+To explicitly request this GPU:
+```bash
+srun --pty -A cil --gpus 5060ti:1 -t 60 bash --login
+```
+*(Note: If you set up the `conda_cil` smart function as described in `environment_setup.md`, the correct environment will be chosen automatically regardless of the GPU!)*
 
+**3. GB10 Nodes (Special Use Case)**
+While `gb10` nodes offer a larger combined CPU/GPU memory budget due to their distinct architecture, **they are not recommended for our default workflow**. Their performance characteristics and environment compatibility can be quite unpredictable compared to the standard RTX/GTX nodes. You should only consider requesting a `gb10` node as a fallback if your training job consistently runs out of memory on the regular GPUs.
 ```bash
 cluster-tunnel start --gpus gb10:1 -A cil_jobs --time=2:00:00
 ```

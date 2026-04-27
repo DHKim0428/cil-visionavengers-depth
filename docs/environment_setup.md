@@ -31,36 +31,63 @@ conda activate /cluster/courses/cil/envs/envs/monocular-depth-estimation
 
 ---
 
-## 2. Troubleshooting: Conda Environment Conflicts
-If you encounter errors like `import: command not found` or `syntax error near unexpected token 'sys.argv'` when trying to activate the environment, you likely have multiple Conda installations conflicting in your `~/.bashrc` (e.g., from other courses or personal projects).
+## 2. Troubleshooting: Conda Environment Conflicts & GPU Architecture Issues
 
-**To fix this, disable auto-initialization and use aliases instead:**
+The cluster has different GPU generations. The standard environment crashes on the new RTX 5060 Ti GPUs (`cudaErrorNoKernelImageForDevice`), while the 5060-specific environment might not be stable on older GPUs. 
+
+Also, you might have other Conda installations from different courses conflicting in your `~/.bashrc`.
+
+**To fix this automatically and manage multiple projects, disable auto-initialization and use a smart bash function instead:**
 
 1. Open your `~/.bashrc` file.
 2. **Comment out or delete** all existing `# >>> conda initialize >>> ... # <<< conda initialize <<<` blocks.
-3. Add the following aliases at the bottom of the file (update the second path with your actual other Conda path):
+3. Add the following function and aliases at the bottom of the file:
 
 ```bash
-# Alias for this CIL project
-alias conda_cil='eval "$(/cluster/courses/cil/envs/bin/conda shell.bash hook 2> /dev/null)"'
+# ---------------------------------------------------------
+# 1. Smart Conda activation for CIL Project
+# ---------------------------------------------------------
+conda_cil() {
+    # Initialize CIL Conda quietly
+    eval "$(/cluster/courses/cil/envs/bin/conda shell.bash hook 2> /dev/null)"
+    
+    # Check if nvidia-smi is available and get the GPU name
+    if command -v nvidia-smi &> /dev/null; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)
+        
+        # Activate the matching environment
+        if [[ "$GPU_NAME" == *"5060"* ]]; then
+            echo "[*] Detected $GPU_NAME: Activating 5060-specific environment..."
+            conda activate /cluster/courses/cil/envs/envs/monodepth-5060
+        else
+            echo "[*] Detected $GPU_NAME: Activating standard environment..."
+            conda activate /cluster/courses/cil/envs/envs/monocular-depth-estimation
+        fi
+    else
+        # Fallback if no GPU is found (e.g., login node)
+        echo "[*] No GPU detected. Activating standard environment..."
+        conda activate /cluster/courses/cil/envs/envs/monocular-depth-estimation
+    fi
+}
 
-# Alias for your other project (Placeholder - update the path accordingly)
+# ---------------------------------------------------------
+# 2. Alias for your other projects (Placeholder)
+# ---------------------------------------------------------
+# Update the path with your actual other Conda path (e.g., Miniconda in your workspace)
 alias conda_other='eval "$(/path/to/your/other/miniconda3/bin/conda shell.bash hook 2> /dev/null)"'
 ```
 
-4. Save the file and apply the changes by running:
+4. Save the file and apply the changes:
 ```bash
 source ~/.bashrc
 ```
 
-**How to run the project using the alias:**
-From now on, whenever you open a new terminal, Conda will not activate automatically. To work on this project, initialize the specific Conda environment first using your alias:
+**How to start your work:**
+From now on, Conda will not start automatically. 
 
-```bash
-# 1. Initialize the CIL Conda system
-conda_cil
-
-# 2. Load the module and activate the environment
-module load cuda/12.6.0
-conda activate /cluster/courses/cil/envs/envs/monocular-depth-estimation
-```
+- **For this CIL project:** No matter which GPU node you get allocated, just run:
+  ```bash
+  module load cuda/12.6.0
+  conda_cil
+  ```
+- **For other projects:** Run `conda_other`, then activate your specific environment (e.g., `conda activate my_env`).
