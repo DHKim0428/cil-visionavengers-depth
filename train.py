@@ -112,6 +112,7 @@ def main(args):
         tilt_max_yaw_deg=args.tilt_max_yaw_deg,
         tilt_max_pitch_deg=args.tilt_max_pitch_deg,
         tilt_fov_deg=args.tilt_fov_deg,
+        teacher_mask_dir=args.teacher_mask_dir,
     )
     val_base = SimpleDepthDataset(
         args.data_root,
@@ -139,6 +140,10 @@ def main(args):
         f"crop={args.enable_crop}, color_jitter={args.enable_color_jitter}"
     )
     print(f"[*] Tilt augmentation: mode={args.tilt_mode}, prob={args.tilt_prob}")
+    if args.teacher_mask_dir:
+        print(f"[*] Teacher reliability masks: enabled for training only ({args.teacher_mask_dir})")
+    else:
+        print("[*] Teacher reliability masks: disabled")
 
     # Model & Optimizer
     model = UNetBaseline().to(device)
@@ -216,6 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--tilt_max_yaw_deg", type=float, default=5.0, help="Maximum absolute yaw angle in degrees")
     parser.add_argument("--tilt_max_pitch_deg", type=float, default=5.0, help="Maximum absolute pitch angle in degrees")
     parser.add_argument("--tilt_fov_deg", type=float, default=60.0, help="Assumed horizontal field of view for approximate intrinsics")
+    parser.add_argument("--teacher_mask_dir", type=str, default=None, help="Optional training-only DA3 reliability mask directory")
     
     args = parser.parse_args()
     main(args)

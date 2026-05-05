@@ -297,10 +297,12 @@ class SimpleDepthDataset(Dataset):
         tilt_max_pitch_deg=5.0,
         tilt_fov_deg=60.0,
         max_depth=80.0,
+        teacher_mask_dir=None,
     ):
         self.root = Path(root)
         self.img_size = img_size
         self.max_depth = max_depth
+        self.teacher_mask_dir = Path(teacher_mask_dir) if teacher_mask_dir else None
         self.augmentation = DepthAugmentation(
             enable_hflip=enable_hflip,
             hflip_prob=hflip_prob,
@@ -351,6 +353,23 @@ class SimpleDepthDataset(Dataset):
         
         # Valid mask: depth > 0
         valid_mask = (depth_t > 0).float()
+        if self.teacher_mask_dir is not None:
+            stem = rgb_path.name.replace("_rgb.png", "")
+            teacher_mask_path = self.teacher_mask_dir / f"{stem}_teacher_mask.png"
+            if not teacher_mask_path.exists():
+                raise FileNotFoundError(
+                    f"Missing teacher reliability mask for {rgb_path.name}: {teacher_mask_path}"
+                )
+
+            teacher_mask = np.array(Image.open(teacher_mask_path).convert("L"), dtype=np.float32)
+            teacher_mask_t = torch.from_numpy(teacher_mask).unsqueeze(0).unsqueeze(0)
+            teacher_mask_t = F.interpolate(
+                teacher_mask_t,
+                size=(self.img_size, self.img_size),
+                mode="nearest",
+            ).squeeze(0)
+            valid_mask = valid_mask * (teacher_mask_t > 127.0).float()
+            depth_t = depth_t * valid_mask
 
         # Apply all train-time paired augmentations before normalization so depth
         # updates remain in meters and masks stay aligned with the supervision.
