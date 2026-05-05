@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 
 DEFAULT_DATA_ROOT = "/cluster/courses/cil/monocular-depth-estimation/train"
@@ -198,6 +199,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--process_res", type=int, default=504)
     parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--verbose", action="store_true", help="Print per-sample mask statistics")
     return parser.parse_args()
 
 
@@ -219,7 +221,8 @@ def main():
     model = load_da3_model(args.model_dir, args.device, args.da3_repo)
 
     rows = []
-    for index, rgb_name in enumerate(train_names):
+    pbar = tqdm(train_names, desc="Precomputing DA3 reliability masks")
+    for index, rgb_name in enumerate(pbar):
         rgb_path = data_root / rgb_name
         depth_path = data_root / rgb_name.replace("_rgb.png", "_depth.npy")
         if not rgb_path.exists():
@@ -248,11 +251,18 @@ def main():
             **metrics,
         }
         rows.append(row)
-        print(
-            f"[{index + 1}/{len(train_names)}] {rgb_name}: "
-            f"removed {row['removed_pixels']}/{row['valid_pixels']} "
-            f"({row['removed_valid_ratio']:.4f})"
+        pbar.set_postfix(
+            {
+                "removed": f"{row['removed_valid_ratio']:.3f}",
+                "valid": row["valid_pixels"],
+            }
         )
+        if args.verbose:
+            tqdm.write(
+                f"[{index + 1}/{len(train_names)}] {rgb_name}: "
+                f"removed {row['removed_pixels']}/{row['valid_pixels']} "
+                f"({row['removed_valid_ratio']:.4f})"
+            )
 
     csv_path = output_dir / "per_sample.csv"
     with open(csv_path, "w", encoding="utf-8", newline="") as f:
