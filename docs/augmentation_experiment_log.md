@@ -40,7 +40,7 @@ Validation curve:
 
 ### 2. Geometry Tilt, Strong
 
-- Job: `unet-tilt-geom` (`57114`)
+- Job: `unet-tilt-geom` (`58285`)
 - Augmentation:
   - basic augmentation disabled
   - tilt augmentation enabled
@@ -50,15 +50,15 @@ Validation curve:
   - `tilt_max_pitch_deg=5`
   - `tilt_fov_deg=60`
 - Runtime: `00:24:08`
-- Final train SILog: `0.7665`
-- Final val SILog: `0.8040`
-- Best val SILog: `0.8040` at epoch `10`
+- Final train SILog: `0.6539`
+- Final val SILog: `0.8148`
+- Best val SILog: `0.7027` at epoch `9`
 
 Validation curve:
 
 ```text
-1.4776 -> 1.4201 -> 1.0320 -> 0.9827 -> 0.9577
--> 1.0938 -> 0.8734 -> 0.9810 -> 0.8699 -> 0.8040
+1.0638 -> 1.0621 -> 0.9040 -> 0.9084 -> 0.8782
+-> 0.8214 -> 0.7808 -> 0.7767 -> 0.7027 -> 0.8148
 ```
 
 ### 3. Geometry Tilt, Weak
