@@ -357,29 +357,32 @@ def main():
                     .numpy()
                     .astype(np.float32),
                 )
-            if not is_primary_variant:
-                Image.fromarray(tensor_rgb_to_uint8(variant_output["image"])).save(rgb_variant_path)
-                Image.fromarray(tensor_mask_to_uint8(variant_output["mask"])).save(mask_variant_path)
-                debug_variant_strip = make_debug_strip(
-                    original_rgb,
-                    original_depth,
-                    original_mask,
-                    variant_output["image"],
-                    variant_output["depth_naive"],
-                    variant_output["depth"],
-                    variant_output["mask"],
-                )
-                Image.fromarray(debug_variant_strip).save(debug_variant_path, quality=92)
+            Image.fromarray(tensor_rgb_to_uint8(variant_output["image"])).save(rgb_variant_path)
+            Image.fromarray(tensor_mask_to_uint8(variant_output["mask"])).save(mask_variant_path)
+            debug_variant_strip = make_debug_strip(
+                original_rgb,
+                original_depth,
+                original_mask,
+                variant_output["image"],
+                variant_output["depth_naive"],
+                variant_output["depth"],
+                variant_output["mask"],
+            )
+            Image.fromarray(debug_variant_strip).save(debug_variant_path, quality=92)
             fov_files[variant_name] = {
-                "rgb": rgb_aug_path.name if is_primary_variant else rgb_variant_path.name,
-                "mask": mask_aug_path.name if is_primary_variant else mask_variant_path.name,
+                "rgb": rgb_variant_path.name,
+                "mask": mask_variant_path.name,
                 "depth": depth_geo_path.name,
                 "alpha": alpha_path.name,
                 "depth_naive": naive_variant_path.name if args.save_naive else None,
+                "rgb_primary_alias": rgb_aug_path.name if is_primary_variant else None,
+                "mask_primary_alias": mask_aug_path.name if is_primary_variant else None,
+                "depth_primary_alias": depth_aug_path.name if is_primary_variant else None,
                 "depth_naive_primary_alias": depth_naive_path.name
                 if args.save_naive and is_primary_variant
                 else None,
-                "debug": debug_path.name if is_primary_variant else debug_variant_path.name,
+                "debug": debug_variant_path.name,
+                "debug_primary_alias": debug_path.name if is_primary_variant else None,
                 "fov_deg": variant_output["fov_deg"],
             }
         Image.fromarray(tensor_mask_to_uint8(augmented_mask)).save(mask_aug_path)
@@ -435,16 +438,17 @@ def main():
         "other_augmentations": "disabled",
         "depth_units": "meters",
         "files": {
-            "rgb_aug": "Augmented RGB after geometry tilt using the primary FOV.",
+            "rgb_aug": "Backward-compatible alias for the primary FOV augmented RGB.",
             "rgb_aug_fov*": "Augmented RGB after geometry tilt recomputed with the listed FOV.",
-            "depth_aug": "Recomputed geometry-consistent z-depth in meters; invalid pixels are zero.",
-            "depth_naive": "Naive homography-warped depth from the primary FOV warp.",
+            "depth_aug": "Backward-compatible alias for the primary FOV geometry z-depth in meters.",
+            "depth_naive": "Backward-compatible alias for the primary FOV naive warped depth.",
             "depth_naive_fov*": "Naive homography-warped depth recomputed with the listed FOV warp.",
             "depth_geo_fov*": "Geometry depth recomputed with the listed FOV warp.",
             "alpha_fov*": "Pixel-dependent geometry depth scale for the listed FOV.",
-            "mask_aug": "Valid-pixel mask after inverse warp and geometry depth checks for the primary FOV.",
+            "mask_aug": "Backward-compatible alias for the primary FOV valid-pixel mask.",
             "mask_aug_fov*": "Valid-pixel mask after inverse warp and geometry depth checks for the listed FOV.",
-            "debug": "Side-by-side original RGB, original depth, tilt RGB, naive depth, geometry depth, and valid mask.",
+            "debug": "Backward-compatible alias for the primary FOV debug strip.",
+            "debug_fov*": "Side-by-side original RGB, original depth, tilt RGB, naive depth, geometry depth, and valid mask for the listed FOV.",
         },
         "samples": samples,
     }
