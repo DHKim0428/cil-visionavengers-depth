@@ -8,6 +8,7 @@ MODEL_DIR="${MODEL_DIR:-depth-anything/DA3-GIANT-1.1}"
 HF_HOME="${HF_HOME:-/workspace/.hf_home}"
 MAX_SAMPLES="${MAX_SAMPLES:-30}"
 PROCESS_RES="${PROCESS_RES:-504}"
+TARGET_VARIANTS="${TARGET_VARIANTS:-naive geo_fov50 geo_fov60 geo_fov70}"
 SAVE_VISUALIZATIONS="${SAVE_VISUALIZATIONS:-1}"
 SAVE_PREDICTIONS="${SAVE_PREDICTIONS:-1}"
 
@@ -23,6 +24,9 @@ ARGS=(
     --max_samples "$MAX_SAMPLES"
     --process_res "$PROCESS_RES"
 )
+
+read -r -a TARGET_VARIANT_ARGS <<< "$TARGET_VARIANTS"
+ARGS+=(--target_variants "${TARGET_VARIANT_ARGS[@]}")
 
 if [[ -n "${DA3_REPO:-}" ]]; then
     ARGS+=(--da3_repo "$DA3_REPO")
