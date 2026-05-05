@@ -53,7 +53,20 @@ def load_da3_model(model_dir, device, da3_repo):
     return model.to(device=device).eval()
 
 
-def discover_samples(input_dir, max_samples=None):
+def target_path_for_variant(input_dir, prefix, variant):
+    if variant in {"geo", "d_geo", "depth_aug"}:
+        return input_dir / f"{prefix}_depth_aug.npy"
+    if variant == "naive":
+        return input_dir / f"{prefix}_depth_naive.npy"
+    if variant.startswith("geo_fov"):
+        suffix = variant[len("geo_fov") :]
+        return input_dir / f"{prefix}_depth_geo_fov{suffix}.npy"
+    raise ValueError(
+        f"Unknown target variant: {variant}. Use naive, geo, depth_aug, or geo_fovXX."
+    )
+
+
+def discover_samples(input_dir, target_variants, max_samples=None):
     input_dir = Path(input_dir)
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
@@ -67,18 +80,23 @@ def discover_samples(input_dir, max_samples=None):
     samples = []
     for rgb_path in rgb_paths:
         prefix = rgb_path.name[: -len("_rgb_aug.png")]
-        depth_path = input_dir / f"{prefix}_depth_aug.npy"
         mask_path = input_dir / f"{prefix}_mask_aug.png"
-        if not depth_path.exists():
-            raise FileNotFoundError(f"Missing D_geo file for {rgb_path.name}: {depth_path}")
         if not mask_path.exists():
             raise FileNotFoundError(f"Missing mask file for {rgb_path.name}: {mask_path}")
+        target_paths = {}
+        for variant in target_variants:
+            target_path = target_path_for_variant(input_dir, prefix, variant)
+            if not target_path.exists():
+                raise FileNotFoundError(
+                    f"Missing target variant {variant} for {rgb_path.name}: {target_path}"
+                )
+            target_paths[variant] = target_path
         samples.append(
             {
                 "prefix": prefix,
                 "rgb_path": rgb_path,
-                "depth_path": depth_path,
                 "mask_path": mask_path,
+                "target_paths": target_paths,
             }
         )
     return samples
@@ -141,13 +159,19 @@ def silog(pred, target):
     return float(np.sqrt(max(value, 0.0)))
 
 
-def compute_metrics(da3_depth, d_geo, mask):
-    valid = (mask > 0) & (d_geo > 0) & np.isfinite(d_geo) & (da3_depth > 0) & np.isfinite(da3_depth)
+def compute_metrics(da3_depth, target_depth, mask):
+    valid = (
+        (mask > 0)
+        & (target_depth > 0)
+        & np.isfinite(target_depth)
+        & (da3_depth > 0)
+        & np.isfinite(da3_depth)
+    )
     if int(valid.sum()) < 2:
         return None, valid, None
 
     teacher = da3_depth[valid].astype(np.float64)
-    target = d_geo[valid].astype(np.float64)
+    target = target_depth[valid].astype(np.float64)
 
     teacher_median = float(np.median(teacher))
     target_median = float(np.median(target))
@@ -237,18 +261,18 @@ def add_label(image, text):
     return np.array(labeled)
 
 
-def save_visualization(path, rgb_path, d_geo, da3_depth, da3_scaled, valid, error_limit):
+def save_visualization(path, rgb_path, target_depth, da3_depth, da3_scaled, valid, error_limit, target_label):
     rgb = np.asarray(Image.open(rgb_path).convert("RGB"))
-    target_shape = d_geo.shape
+    target_shape = target_depth.shape
     if rgb.shape[:2] != target_shape:
         rgb = np.asarray(Image.fromarray(rgb).resize((target_shape[1], target_shape[0]), Image.BILINEAR))
 
-    abs_rel = np.zeros_like(d_geo, dtype=np.float32)
-    abs_rel[valid] = np.abs(da3_scaled[valid] - d_geo[valid]) / np.maximum(d_geo[valid], EPS)
+    abs_rel = np.zeros_like(target_depth, dtype=np.float32)
+    abs_rel[valid] = np.abs(da3_scaled[valid] - target_depth[valid]) / np.maximum(target_depth[valid], EPS)
 
     panels = [
         add_label(rgb, "Tilt RGB"),
-        add_label(depth_to_color(d_geo, valid), "D_geo"),
+        add_label(depth_to_color(target_depth, valid), target_label),
         add_label(depth_to_color(da3_scaled, valid), "DA3 scaled"),
         add_label(error_to_color(abs_rel, valid, limit=error_limit), "AbsRel error"),
     ]
@@ -305,6 +329,12 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--process_res", type=int, default=504)
+    parser.add_argument(
+        "--target_variants",
+        nargs="+",
+        default=["geo"],
+        help="Target variants to compare: naive, geo/depth_aug, geo_fov50, geo_fov60, ...",
+    )
     parser.add_argument("--save_predictions", action="store_true")
     parser.add_argument("--save_visualizations", action="store_true")
     parser.add_argument("--error_vis_limit", type=float, default=0.50)
@@ -323,7 +353,8 @@ def main():
     if args.save_visualizations:
         vis_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = discover_samples(input_dir, args.max_samples)
+    target_variants = list(dict.fromkeys(args.target_variants))
+    samples = discover_samples(input_dir, target_variants, args.max_samples)
     metadata_path = input_dir / "metadata.json"
     source_metadata = None
     if metadata_path.exists():
@@ -334,51 +365,60 @@ def main():
 
     rows = []
     for index, sample in enumerate(samples):
-        d_geo = np.load(sample["depth_path"]).astype(np.float32)
+        first_target = np.load(next(iter(sample["target_paths"].values()))).astype(np.float32)
         mask = np.asarray(Image.open(sample["mask_path"]).convert("L")) > 127
-        if mask.shape != d_geo.shape:
+        if mask.shape != first_target.shape:
             mask = np.asarray(
                 Image.fromarray(mask.astype(np.uint8) * 255).resize(
-                    (d_geo.shape[1], d_geo.shape[0]),
+                    (first_target.shape[1], first_target.shape[0]),
                     Image.NEAREST,
                 )
             ) > 127
 
         da3_depth = run_da3_inference(model, sample["rgb_path"], args.process_res)
-        da3_depth = resize_array_to_shape(da3_depth, d_geo.shape)
-        metrics, valid, scale = compute_metrics(da3_depth, d_geo, mask)
-        if metrics is None:
-            continue
-
-        da3_scaled = da3_depth * scale
-        row = {
-            "index": index,
-            "prefix": sample["prefix"],
-            "rgb_aug": sample["rgb_path"].name,
-            "depth_aug": sample["depth_path"].name,
-            "mask_aug": sample["mask_path"].name,
-            **metrics,
-        }
+        da3_depth = resize_array_to_shape(da3_depth, first_target.shape)
 
         if args.save_predictions:
             pred_path = pred_dir / f"{sample['prefix']}_da3_depth.npy"
             np.save(pred_path, da3_depth.astype(np.float32))
-            row["da3_depth"] = str(pred_path.relative_to(output_dir))
 
-        if args.save_visualizations:
-            vis_path = vis_dir / f"{sample['prefix']}_da3_vs_dgeo.jpg"
-            save_visualization(
-                vis_path,
-                sample["rgb_path"],
-                d_geo,
-                da3_depth,
-                da3_scaled,
-                valid,
-                args.error_vis_limit,
-            )
-            row["visualization"] = str(vis_path.relative_to(output_dir))
+        for variant, target_path in sample["target_paths"].items():
+            target_depth = np.load(target_path).astype(np.float32)
+            if target_depth.shape != first_target.shape:
+                target_depth = resize_array_to_shape(target_depth, first_target.shape)
+            metrics, valid, scale = compute_metrics(da3_depth, target_depth, mask)
+            if metrics is None:
+                continue
 
-        rows.append(row)
+            da3_scaled = da3_depth * scale
+            row = {
+                "index": index,
+                "prefix": sample["prefix"],
+                "target_variant": variant,
+                "rgb_aug": sample["rgb_path"].name,
+                "target_depth": target_path.name,
+                "mask_aug": sample["mask_path"].name,
+                **metrics,
+            }
+
+            if args.save_predictions:
+                row["da3_depth"] = str(pred_path.relative_to(output_dir))
+
+            if args.save_visualizations:
+                vis_path = vis_dir / f"{sample['prefix']}_{variant}_da3_vs_target.jpg"
+                save_visualization(
+                    vis_path,
+                    sample["rgb_path"],
+                    target_depth,
+                    da3_depth,
+                    da3_scaled,
+                    valid,
+                    args.error_vis_limit,
+                    variant,
+                )
+                row["visualization"] = str(vis_path.relative_to(output_dir))
+
+            rows.append(row)
 
     csv_path = output_dir / "per_sample.csv"
     if rows:
@@ -393,12 +433,17 @@ def main():
         "model_dir": args.model_dir,
         "da3_repo": args.da3_repo,
         "process_res": args.process_res,
+        "target_variants": target_variants,
         "num_samples_found": len(samples),
-        "num_samples_analyzed": len(rows),
-        "comparison": "DA3 teacher depth vs geometry tilt target D_geo",
+        "num_samples_analyzed": len({row["prefix"] for row in rows}),
+        "num_rows": len(rows),
+        "comparison": "DA3 teacher depth vs selected tilt target variants",
         "alignment": "per-image median scaling on valid pixels",
-        "valid_pixels": "mask_aug > 0, D_geo > 0, DA3 finite and positive",
-        "aggregate": aggregate_rows(rows),
+        "valid_pixels": "mask_aug > 0, target depth > 0, DA3 finite and positive",
+        "aggregate": {
+            variant: aggregate_rows([row for row in rows if row["target_variant"] == variant])
+            for variant in target_variants
+        },
         "per_sample_csv": csv_path.name,
         "predictions_saved": bool(args.save_predictions),
         "visualizations_saved": bool(args.save_visualizations),
