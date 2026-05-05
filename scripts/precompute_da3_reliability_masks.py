@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import csv
 import json
 import os
@@ -17,6 +18,32 @@ DEFAULT_OUTPUT_DIR = (
 )
 DEFAULT_MODEL_DIR = "depth-anything/DA3-GIANT-1.1"
 EPS = 1e-6
+
+
+@contextlib.contextmanager
+def suppress_output(enabled):
+    if not enabled:
+        yield
+        return
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+    saved_stdout_fd = os.dup(stdout_fd)
+    saved_stderr_fd = os.dup(stderr_fd)
+    try:
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), stdout_fd)
+            os.dup2(devnull.fileno(), stderr_fd)
+            yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved_stdout_fd, stdout_fd)
+        os.dup2(saved_stderr_fd, stderr_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
 
 
 def add_da3_repo_to_path(da3_repo):
@@ -71,11 +98,12 @@ def load_resized_depth(depth_path, img_size):
     return resize_array_to_shape(depth, (img_size, img_size), mode="nearest")
 
 
-def run_da3_inference(model, image_path, process_res):
+def run_da3_inference(model, image_path, process_res, quiet=True):
     kwargs = {}
     if process_res is not None and process_res > 0:
         kwargs["process_res"] = process_res
-    prediction = model.inference([str(image_path)], **kwargs)
+    with suppress_output(quiet):
+        prediction = model.inference([str(image_path)], **kwargs)
     depth = np.asarray(prediction.depth)
     if depth.ndim == 3:
         depth = depth[0]
@@ -231,7 +259,12 @@ def main():
             raise FileNotFoundError(f"Missing depth file for {rgb_path.name}: {depth_path}")
 
         target_depth = load_resized_depth(depth_path, args.img_size)
-        teacher_depth = run_da3_inference(model, rgb_path, args.process_res)
+        teacher_depth = run_da3_inference(
+            model,
+            rgb_path,
+            args.process_res,
+            quiet=not args.verbose,
+        )
         teacher_depth = resize_array_to_shape(teacher_depth, target_depth.shape, mode="bilinear")
 
         reliable, metrics = compute_reliability_mask(
