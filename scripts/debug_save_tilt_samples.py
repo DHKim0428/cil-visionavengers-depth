@@ -71,51 +71,49 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
     _ = torch.rand(())
     yaw = augmentation._sample_angle(augmentation.max_yaw_rad)
     pitch = augmentation._sample_angle(augmentation.max_pitch_rad)
-
-    K, K_inv = augmentation._intrinsics(height, width, device, dtype)
     R = augmentation._rotation(yaw, pitch, device, dtype)
-    H = K @ R @ K_inv
-    H_inv = torch.linalg.inv(H)
-
-    u_src, v_src = augmentation._inverse_warp_coordinates(H_inv, height, width, device, dtype)
-    grid = augmentation._grid_sample_coordinates(u_src, v_src, height, width)
-
-    image_aug = F.grid_sample(
-        image.unsqueeze(0),
-        grid.unsqueeze(0),
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=True,
-    ).squeeze(0)
-    depth_naive = F.grid_sample(
-        depth.unsqueeze(0),
-        grid.unsqueeze(0),
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=True,
-    ).squeeze(0)
-    mask_src = F.grid_sample(
-        mask.unsqueeze(0),
-        grid.unsqueeze(0),
-        mode="nearest",
-        padding_mode="zeros",
-        align_corners=True,
-    ).squeeze(0)
-
-    in_bounds = (u_src >= 0.0) & (u_src <= width - 1) & (v_src >= 0.0) & (v_src <= height - 1)
 
     fov_outputs = {}
     primary_name = variant_name_for_fov(math.degrees(augmentation.fov_rad))
-    primary_valid = None
     for fov in fov_variants:
         old_fov = augmentation.fov_rad
         augmentation.fov_rad = math.radians(fov)
         try:
-            _, K_inv_variant = augmentation._intrinsics(height, width, device, dtype)
+            K, K_inv = augmentation._intrinsics(height, width, device, dtype)
         finally:
             augmentation.fov_rad = old_fov
 
-        alpha = augmentation._depth_scale(R, K_inv_variant, u_src, v_src)
+        H = K @ R @ K_inv
+        H_inv = torch.linalg.inv(H)
+        u_src, v_src = augmentation._inverse_warp_coordinates(
+            H_inv, height, width, device, dtype
+        )
+        grid = augmentation._grid_sample_coordinates(u_src, v_src, height, width)
+
+        image_aug = F.grid_sample(
+            image.unsqueeze(0),
+            grid.unsqueeze(0),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
+        ).squeeze(0)
+        depth_naive = F.grid_sample(
+            depth.unsqueeze(0),
+            grid.unsqueeze(0),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
+        ).squeeze(0)
+        mask_src = F.grid_sample(
+            mask.unsqueeze(0),
+            grid.unsqueeze(0),
+            mode="nearest",
+            padding_mode="zeros",
+            align_corners=True,
+        ).squeeze(0)
+
+        in_bounds = (u_src >= 0.0) & (u_src <= width - 1) & (v_src >= 0.0) & (v_src <= height - 1)
+        alpha = augmentation._depth_scale(R, K_inv, u_src, v_src)
         depth_geo = depth_naive * alpha.unsqueeze(0)
         valid = in_bounds
         valid = valid & (alpha > augmentation.eps)
@@ -127,25 +125,18 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
         mask_geo = valid.unsqueeze(0).float()
         name = variant_name_for_fov(fov)
         fov_outputs[name] = {
+            "image": image_aug,
+            "depth_naive": depth_naive,
             "depth": depth_geo * mask_geo,
             "alpha": alpha,
             "mask": mask_geo,
             "fov_deg": float(fov),
         }
-        if name == primary_name:
-            primary_valid = valid
 
     if primary_name not in fov_outputs:
         raise ValueError(f"Primary FOV variant {primary_name} missing from {fov_variants}")
 
-    if primary_valid is None:
-        primary_valid = fov_outputs[primary_name]["mask"].squeeze(0) > 0.5
-
-    mask_aug = primary_valid.unsqueeze(0).float()
     return {
-        "image_aug": image_aug,
-        "depth_naive": depth_naive,
-        "mask_aug": mask_aug,
         "fov_outputs": fov_outputs,
         "primary_variant": primary_name,
         "yaw_deg": float(np.degrees(yaw)),
@@ -320,9 +311,11 @@ def main():
             augmentation,
             fov_variants,
         )
-        augmented_rgb = outputs["image_aug"]
-        augmented_depth = outputs["fov_outputs"][primary_variant]["depth"]
-        augmented_mask = outputs["mask_aug"]
+        primary_output = outputs["fov_outputs"][primary_variant]
+        augmented_rgb = primary_output["image"]
+        augmented_depth = primary_output["depth"]
+        augmented_mask = primary_output["mask"]
+        naive_depth = primary_output["depth_naive"]
 
         stem = rgb_path.name.replace("_rgb.png", "")
         prefix = f"{output_index:03d}_{stem}"
@@ -337,21 +330,57 @@ def main():
         if args.save_naive:
             np.save(
                 depth_naive_path,
-                outputs["depth_naive"].detach().cpu().squeeze(0).numpy().astype(np.float32),
+                naive_depth.detach().cpu().squeeze(0).numpy().astype(np.float32),
             )
         fov_files = {}
         for variant_name, variant_output in outputs["fov_outputs"].items():
             fov_value = int(round(variant_output["fov_deg"]))
+            is_primary_variant = variant_name == primary_variant
             depth_geo_path = output_dir / f"{prefix}_depth_geo_fov{fov_value}.npy"
             alpha_path = output_dir / f"{prefix}_alpha_fov{fov_value}.npy"
+            rgb_variant_path = output_dir / f"{prefix}_rgb_aug_fov{fov_value}.png"
+            mask_variant_path = output_dir / f"{prefix}_mask_aug_fov{fov_value}.png"
+            naive_variant_path = output_dir / f"{prefix}_depth_naive_fov{fov_value}.npy"
+            debug_variant_path = output_dir / f"{prefix}_debug_fov{fov_value}.jpg"
+
             np.save(
                 depth_geo_path,
                 variant_output["depth"].detach().cpu().squeeze(0).numpy().astype(np.float32),
             )
             np.save(alpha_path, variant_output["alpha"].detach().cpu().numpy().astype(np.float32))
+            if args.save_naive:
+                np.save(
+                    naive_variant_path,
+                    variant_output["depth_naive"]
+                    .detach()
+                    .cpu()
+                    .squeeze(0)
+                    .numpy()
+                    .astype(np.float32),
+                )
+            if not is_primary_variant:
+                Image.fromarray(tensor_rgb_to_uint8(variant_output["image"])).save(rgb_variant_path)
+                Image.fromarray(tensor_mask_to_uint8(variant_output["mask"])).save(mask_variant_path)
+                debug_variant_strip = make_debug_strip(
+                    original_rgb,
+                    original_depth,
+                    original_mask,
+                    variant_output["image"],
+                    variant_output["depth_naive"],
+                    variant_output["depth"],
+                    variant_output["mask"],
+                )
+                Image.fromarray(debug_variant_strip).save(debug_variant_path, quality=92)
             fov_files[variant_name] = {
+                "rgb": rgb_aug_path.name if is_primary_variant else rgb_variant_path.name,
+                "mask": mask_aug_path.name if is_primary_variant else mask_variant_path.name,
                 "depth": depth_geo_path.name,
                 "alpha": alpha_path.name,
+                "depth_naive": naive_variant_path.name if args.save_naive else None,
+                "depth_naive_primary_alias": depth_naive_path.name
+                if args.save_naive and is_primary_variant
+                else None,
+                "debug": debug_path.name if is_primary_variant else debug_variant_path.name,
                 "fov_deg": variant_output["fov_deg"],
             }
         Image.fromarray(tensor_mask_to_uint8(augmented_mask)).save(mask_aug_path)
@@ -361,7 +390,7 @@ def main():
             original_depth,
             original_mask,
             augmented_rgb,
-            outputs["depth_naive"],
+            naive_depth,
             augmented_depth,
             augmented_mask,
         )
@@ -403,15 +432,19 @@ def main():
         "fov_variants": fov_variants,
         "target_variants": target_variants,
         "primary_target": primary_variant,
+        "strict_fov_rgb_warp": True,
         "other_augmentations": "disabled",
         "depth_units": "meters",
         "files": {
-            "rgb_aug": "Augmented RGB after geometry tilt.",
+            "rgb_aug": "Augmented RGB after geometry tilt using the primary FOV.",
+            "rgb_aug_fov*": "Augmented RGB after geometry tilt recomputed with the listed FOV.",
             "depth_aug": "Recomputed geometry-consistent z-depth in meters; invalid pixels are zero.",
             "depth_naive": "Naive homography-warped depth from the primary FOV warp.",
-            "depth_geo_fov*": "Geometry depth recomputed with the listed FOV using the primary FOV source coordinates.",
+            "depth_naive_fov*": "Naive homography-warped depth recomputed with the listed FOV warp.",
+            "depth_geo_fov*": "Geometry depth recomputed with the listed FOV warp.",
             "alpha_fov*": "Pixel-dependent geometry depth scale for the listed FOV.",
-            "mask_aug": "Valid-pixel mask after inverse warp and geometry depth checks.",
+            "mask_aug": "Valid-pixel mask after inverse warp and geometry depth checks for the primary FOV.",
+            "mask_aug_fov*": "Valid-pixel mask after inverse warp and geometry depth checks for the listed FOV.",
             "debug": "Side-by-side original RGB, original depth, tilt RGB, naive depth, geometry depth, and valid mask.",
         },
         "samples": samples,

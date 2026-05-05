@@ -58,12 +58,41 @@ def target_path_for_variant(input_dir, prefix, variant):
         return input_dir / f"{prefix}_depth_aug.npy"
     if variant == "naive":
         return input_dir / f"{prefix}_depth_naive.npy"
+    if variant.startswith("naive_fov"):
+        suffix = variant[len("naive_fov") :]
+        return input_dir / f"{prefix}_depth_naive_fov{suffix}.npy"
     if variant.startswith("geo_fov"):
         suffix = variant[len("geo_fov") :]
         return input_dir / f"{prefix}_depth_geo_fov{suffix}.npy"
     raise ValueError(
-        f"Unknown target variant: {variant}. Use naive, geo, depth_aug, or geo_fovXX."
+        f"Unknown target variant: {variant}. Use naive, naive_fovXX, geo, depth_aug, or geo_fovXX."
     )
+
+
+def fov_suffix_for_variant(variant):
+    if variant.startswith("geo_fov"):
+        return variant[len("geo_fov") :]
+    if variant.startswith("naive_fov"):
+        return variant[len("naive_fov") :]
+    return None
+
+
+def rgb_path_for_variant(input_dir, prefix, variant):
+    suffix = fov_suffix_for_variant(variant)
+    if suffix:
+        variant_path = input_dir / f"{prefix}_rgb_aug_fov{suffix}.png"
+        if variant_path.exists():
+            return variant_path
+    return input_dir / f"{prefix}_rgb_aug.png"
+
+
+def mask_path_for_variant(input_dir, prefix, variant):
+    suffix = fov_suffix_for_variant(variant)
+    if suffix:
+        variant_path = input_dir / f"{prefix}_mask_aug_fov{suffix}.png"
+        if variant_path.exists():
+            return variant_path
+    return input_dir / f"{prefix}_mask_aug.png"
 
 
 def discover_samples(input_dir, target_variants, max_samples=None):
@@ -80,23 +109,39 @@ def discover_samples(input_dir, target_variants, max_samples=None):
     samples = []
     for rgb_path in rgb_paths:
         prefix = rgb_path.name[: -len("_rgb_aug.png")]
-        mask_path = input_dir / f"{prefix}_mask_aug.png"
-        if not mask_path.exists():
-            raise FileNotFoundError(f"Missing mask file for {rgb_path.name}: {mask_path}")
+        base_mask_path = input_dir / f"{prefix}_mask_aug.png"
+        if not base_mask_path.exists():
+            raise FileNotFoundError(f"Missing mask file for {rgb_path.name}: {base_mask_path}")
         target_paths = {}
+        rgb_paths_by_variant = {}
+        mask_paths_by_variant = {}
         for variant in target_variants:
+            variant_rgb_path = rgb_path_for_variant(input_dir, prefix, variant)
+            if not variant_rgb_path.exists():
+                raise FileNotFoundError(
+                    f"Missing RGB file for target variant {variant}: {variant_rgb_path}"
+                )
+            variant_mask_path = mask_path_for_variant(input_dir, prefix, variant)
+            if not variant_mask_path.exists():
+                raise FileNotFoundError(
+                    f"Missing mask file for target variant {variant}: {variant_mask_path}"
+                )
             target_path = target_path_for_variant(input_dir, prefix, variant)
             if not target_path.exists():
                 raise FileNotFoundError(
                     f"Missing target variant {variant} for {rgb_path.name}: {target_path}"
                 )
             target_paths[variant] = target_path
+            rgb_paths_by_variant[variant] = variant_rgb_path
+            mask_paths_by_variant[variant] = variant_mask_path
         samples.append(
             {
                 "prefix": prefix,
                 "rgb_path": rgb_path,
-                "mask_path": mask_path,
+                "mask_path": base_mask_path,
                 "target_paths": target_paths,
+                "rgb_paths_by_variant": rgb_paths_by_variant,
+                "mask_paths_by_variant": mask_paths_by_variant,
             }
         )
     return samples
@@ -333,7 +378,10 @@ def parse_args():
         "--target_variants",
         nargs="+",
         default=["geo"],
-        help="Target variants to compare: naive, geo/depth_aug, geo_fov50, geo_fov60, ...",
+        help=(
+            "Target variants to compare: naive, naive_fov50, geo/depth_aug, "
+            "geo_fov50, geo_fov60, ..."
+        ),
     )
     parser.add_argument("--save_predictions", action="store_true")
     parser.add_argument("--save_visualizations", action="store_true")
@@ -364,28 +412,31 @@ def main():
     model = load_da3_model(args.model_dir, args.device, args.da3_repo)
 
     rows = []
+    da3_cache = {}
     for index, sample in enumerate(samples):
-        first_target = np.load(next(iter(sample["target_paths"].values()))).astype(np.float32)
-        mask = np.asarray(Image.open(sample["mask_path"]).convert("L")) > 127
-        if mask.shape != first_target.shape:
-            mask = np.asarray(
-                Image.fromarray(mask.astype(np.uint8) * 255).resize(
-                    (first_target.shape[1], first_target.shape[0]),
-                    Image.NEAREST,
-                )
-            ) > 127
-
-        da3_depth = run_da3_inference(model, sample["rgb_path"], args.process_res)
-        da3_depth = resize_array_to_shape(da3_depth, first_target.shape)
-
-        if args.save_predictions:
-            pred_path = pred_dir / f"{sample['prefix']}_da3_depth.npy"
-            np.save(pred_path, da3_depth.astype(np.float32))
-
         for variant, target_path in sample["target_paths"].items():
+            rgb_path = sample["rgb_paths_by_variant"][variant]
+            mask_path = sample["mask_paths_by_variant"][variant]
             target_depth = np.load(target_path).astype(np.float32)
-            if target_depth.shape != first_target.shape:
-                target_depth = resize_array_to_shape(target_depth, first_target.shape)
+
+            mask = np.asarray(Image.open(mask_path).convert("L")) > 127
+            if mask.shape != target_depth.shape:
+                mask = np.asarray(
+                    Image.fromarray(mask.astype(np.uint8) * 255).resize(
+                        (target_depth.shape[1], target_depth.shape[0]),
+                        Image.NEAREST,
+                    )
+                ) > 127
+
+            rgb_key = str(rgb_path)
+            if rgb_key not in da3_cache:
+                da3_cache[rgb_key] = run_da3_inference(model, rgb_path, args.process_res)
+            da3_depth = resize_array_to_shape(da3_cache[rgb_key], target_depth.shape)
+
+            if args.save_predictions:
+                pred_path = pred_dir / f"{sample['prefix']}_{variant}_da3_depth.npy"
+                np.save(pred_path, da3_depth.astype(np.float32))
+
             metrics, valid, scale = compute_metrics(da3_depth, target_depth, mask)
             if metrics is None:
                 continue
@@ -395,9 +446,9 @@ def main():
                 "index": index,
                 "prefix": sample["prefix"],
                 "target_variant": variant,
-                "rgb_aug": sample["rgb_path"].name,
+                "rgb_aug": rgb_path.name,
                 "target_depth": target_path.name,
-                "mask_aug": sample["mask_path"].name,
+                "mask_aug": mask_path.name,
                 **metrics,
             }
 
@@ -408,7 +459,7 @@ def main():
                 vis_path = vis_dir / f"{sample['prefix']}_{variant}_da3_vs_target.jpg"
                 save_visualization(
                     vis_path,
-                    sample["rgb_path"],
+                    rgb_path,
                     target_depth,
                     da3_depth,
                     da3_scaled,
@@ -437,9 +488,10 @@ def main():
         "num_samples_found": len(samples),
         "num_samples_analyzed": len({row["prefix"] for row in rows}),
         "num_rows": len(rows),
-        "comparison": "DA3 teacher depth vs selected tilt target variants",
+        "num_unique_rgb_inferences": len(da3_cache),
+        "comparison": "DA3 teacher depth vs selected tilt target variants, using each variant's RGB warp when available",
         "alignment": "per-image median scaling on valid pixels",
-        "valid_pixels": "mask_aug > 0, target depth > 0, DA3 finite and positive",
+        "valid_pixels": "variant mask > 0, target depth > 0, DA3 finite and positive",
         "aggregate": {
             variant: aggregate_rows([row for row in rows if row["target_variant"] == variant])
             for variant in target_variants

@@ -34,13 +34,13 @@ fi
 
 REPO_DIR="${REPO_DIR:-$HOME/workspace/cil-visionavengers-depth}"
 SCRATCH_ROOT="${SCRATCH_ROOT:-/work/scratch/$USER/cil-visionavengers-depth}"
-INPUT_DIR="${INPUT_DIR:-$SCRATCH_ROOT/debug_tilt_geometry_samples_rgb_unmasked}"
-OUTPUT_DIR="${OUTPUT_DIR:-$SCRATCH_ROOT/da3_teacher_validation_${SLURM_JOB_ID:-local}}"
+INPUT_DIR="${INPUT_DIR:-$SCRATCH_ROOT/debug_tilt_fov_sweep}"
+OUTPUT_DIR="${OUTPUT_DIR:-$SCRATCH_ROOT/da3_teacher_fov_sweep_${SLURM_JOB_ID:-local}}"
 MODEL_DIR="${MODEL_DIR:-depth-anything/DA3-GIANT-1.1}"
 HF_HOME="${HF_HOME:-/work/scratch/$USER/hf_cache}"
 MAX_SAMPLES="${MAX_SAMPLES:-30}"
 PROCESS_RES="${PROCESS_RES:-504}"
-TARGET_VARIANTS="${TARGET_VARIANTS:-geo}"
+TARGET_VARIANTS="${TARGET_VARIANTS:-naive geo_fov50 geo_fov60 geo_fov70}"
 SAVE_VISUALIZATIONS="${SAVE_VISUALIZATIONS:-1}"
 SAVE_PREDICTIONS="${SAVE_PREDICTIONS:-1}"
 
