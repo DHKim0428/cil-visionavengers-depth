@@ -13,6 +13,8 @@ ARGS=(
     scripts/debug_save_tilt_samples.py
     --data_root "$DATA_ROOT"
     --output_dir "$OUTPUT_DIR"
+    --save_naive
+    --fov_variants 50 60 70
 )
 
 python "${ARGS[@]}" 2>&1 | tee "$OUTPUT_DIR/debug_save_tilt_samples.log"
