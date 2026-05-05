@@ -26,6 +26,7 @@ dist/
 
 # Logs
 *.log
+slurm-*.out
 
 # Data and model artifacts
 data/
