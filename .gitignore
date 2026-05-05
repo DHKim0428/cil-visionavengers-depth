@@ -39,6 +39,7 @@ artifacts/
 wandb/
 mlruns/
 related papers/
+debug/
 
 # Local secrets / config
 .env
