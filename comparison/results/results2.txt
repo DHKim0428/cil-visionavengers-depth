@@ -1,0 +1,5 @@
+Samples evaluated : 2260
+
+model path: /home/dchileban/cil/logs/da_v2_sirmse/best.pth
+
+siRMSE : mean=0.4518  median=0.4351  std=0.1543
