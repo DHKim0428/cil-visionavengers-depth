@@ -61,8 +61,7 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
     _, height, width = image.shape
     device = image.device
     dtype = image.dtype
-    if hasattr(augmentation, "sampled_angles_rad"):
-        augmentation.sampled_angles_rad = []
+    augmentation.sampled_angles_rad = []
 
     # Match DepthAugmentation.__call__: the tilt probability check consumes a
     # random draw before yaw/pitch are sampled. Here tilt_prob is always 1.0,
