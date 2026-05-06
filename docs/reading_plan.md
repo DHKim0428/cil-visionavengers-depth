@@ -268,3 +268,6 @@ Most realistic twist candidates:
 9. SSI Depth: https://yaksoy.github.io/sidepth/
 10. UniDepth: https://github.com/lpiccinelli-eth/UniDepth
 11. UniDepthV2: https://arxiv.org/abs/2502.20110
+
+## Project idea notes
+- [Geometry-consistent camera tilt augmentation](geometry_consistent_tilt_augmentation.md): detailed brainstorming note on RGB-depth virtual camera tilt augmentation, depth recomputation, FOV assumptions, affine-invariant loss interaction, and ablation plan.
