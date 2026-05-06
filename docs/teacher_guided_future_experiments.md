@@ -81,6 +81,93 @@ should not use DA3 or any teacher-based postprocessing.
 - Removed-pixel visualizations for a small debug subset.
 - Per-image removed-pixel ratio distribution.
 
+### Results Template
+
+Status: completed, values to be filled from training logs and mask summaries.
+
+#### Experimental Setup
+
+| Field | Value |
+| --- | --- |
+| Dataset split | `splits/unet_seed42.json` |
+| Train samples | TODO |
+| Validation samples | TODO |
+| Image size | 128 |
+| Epochs | TODO |
+| Batch size | TODO |
+| Learning rate | TODO |
+| Baseline augmentation | none |
+| Teacher model | DA3-GIANT-1.1 |
+| Mask application | training loss only |
+| Validation mask | original valid-depth mask only |
+
+Notes:
+
+- DA3 predictions were median-scale aligned to ground truth per image before
+  computing disagreement.
+- Reliability masks were computed only on pixels where both ground-truth depth
+  and DA3 depth were positive and finite.
+- Pixels with zero ground-truth depth were not compared against DA3 and remain
+  excluded by the original valid-depth mask.
+
+#### Mask Precomputation Summary
+
+| Mask | Samples | Weighted removed/valid | Mean removed/valid | Median removed/valid | Median threshold AbsRel | Median AbsRel median | Median AbsRel p95 | Median AbsRel p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| p95 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+| p97.5 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+| p99 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+Mask-quality observations:
+
+- TODO: Are removed pixels concentrated around depth discontinuities, invalid
+  labels, sky/background, reflective surfaces, or thin structures?
+- TODO: Do p99 removals look like extreme outlier cleanup rather than broad
+  denoising?
+- TODO: Any failure cases where DA3 removes visually plausible ground-truth
+  supervision?
+
+#### Training Results
+
+| Run | Teacher mask | Best val SILog | Best epoch | Final val SILog | Final train SILog | Checkpoint / log |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Baseline | none | TODO | TODO | TODO | TODO | TODO |
+| DA3 mask p95 | p95 | TODO | TODO | TODO | TODO | TODO |
+| DA3 mask p97.5 | p97.5 | TODO | TODO | TODO | TODO | TODO |
+| DA3 mask p99 | p99 | TODO | TODO | TODO | TODO | TODO |
+
+Optional Kaggle / held-out submission results:
+
+| Run | Submission file | Public score | Private score | Notes |
+| --- | --- | ---: | ---: | --- |
+| Baseline | TODO | TODO | TODO | TODO |
+| DA3 mask p95 | TODO | TODO | TODO | TODO |
+| DA3 mask p97.5 | TODO | TODO | TODO | TODO |
+| DA3 mask p99 | TODO | TODO | TODO | TODO |
+
+#### Result Summary
+
+Primary comparison:
+
+- Best validation run: TODO
+- Improvement over baseline: TODO
+- Best threshold among p95 / p97.5 / p99: TODO
+- Does the result support teacher-guided label denoising? TODO
+
+Interpretation:
+
+- TODO: If p95 wins, note that removing the noisiest 5% of valid supervision
+  likely helps more than the lost supervision hurts.
+- TODO: If p97.5 or p99 wins, note that DA3 is most useful as a conservative
+  outlier filter rather than an aggressive denoising signal.
+- TODO: If baseline wins, note whether high-disagreement pixels may be hard but
+  useful supervision, or whether DA3 disagreement is mismatched to this dataset.
+
+Recommended next step:
+
+- TODO: Keep best mask setting for the final pipeline, run a random-mask control,
+  combine with basic augmentation, or stop here.
+
 ### Expected Outcomes
 
 If this helps, it supports the claim that some training labels contain noisy
