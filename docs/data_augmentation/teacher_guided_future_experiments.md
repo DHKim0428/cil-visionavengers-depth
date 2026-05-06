@@ -10,7 +10,7 @@ than exact metric scale.
 
 Related notes:
 
-- [Project specification](project_spec.md)
+- [Project specification](../project_spec.md)
 - [Augmentation experiment log](augmentation_experiment_log.md)
 - [DA3 teacher validation brainstorm](da3_teacher_validation_brainstorm.md)
 
@@ -90,12 +90,12 @@ Status: completed, values to be filled from training logs and mask summaries.
 | Field | Value |
 | --- | --- |
 | Dataset split | `splits/unet_seed42.json` |
-| Train samples | TODO |
-| Validation samples | TODO |
+| Train samples | 18084 |
+| Validation samples | 4521 |
 | Image size | 128 |
-| Epochs | TODO |
-| Batch size | TODO |
-| Learning rate | TODO |
+| Epochs | 10 |
+| Batch size | 8 |
+| Learning rate | 1e-3 |
 | Baseline augmentation | none |
 | Teacher model | DA3-GIANT-1.1 |
 | Mask application | training loss only |
@@ -114,9 +114,9 @@ Notes:
 
 | Mask | Samples | Weighted removed/valid | Mean removed/valid | Median removed/valid | Median threshold AbsRel | Median AbsRel median | Median AbsRel p95 | Median AbsRel p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| p95 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| p97.5 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| p99 | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+| p95 | 18084 | 0.0500 | 0.0501 | 0.0500 | 0.4378 | 0.0231 | 0.4378 | 10.8825 |
+| p97.5 | 18084 | 0.0251 | 0.0251 | 0.0251 | 2.1251 | 0.0231 | 0.4378 | 10.8825 |
+| p99 | 18084 | 0.0101 | 0.0101 | 0.0101 | 10.8825 | 0.0231 | 0.4378 | 10.8825 |
 
 Mask-quality observations:
 
@@ -131,28 +131,19 @@ Mask-quality observations:
 
 | Run | Teacher mask | Best val SILog | Best epoch | Final val SILog | Final train SILog | Checkpoint / log |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| Baseline | none | TODO | TODO | TODO | TODO | TODO |
-| DA3 mask p95 | p95 | TODO | TODO | TODO | TODO | TODO |
-| DA3 mask p97.5 | p97.5 | TODO | TODO | TODO | TODO | TODO |
-| DA3 mask p99 | p99 | TODO | TODO | TODO | TODO | TODO |
-
-Optional Kaggle / held-out submission results:
-
-| Run | Submission file | Public score | Private score | Notes |
-| --- | --- | ---: | ---: | --- |
-| Baseline | TODO | TODO | TODO | TODO |
-| DA3 mask p95 | TODO | TODO | TODO | TODO |
-| DA3 mask p97.5 | TODO | TODO | TODO | TODO |
-| DA3 mask p99 | TODO | TODO | TODO | TODO |
+| Baseline | none | 0.6858 | 10 | 0.6858 | 0.6962 | checkpoint: `checkpoints/unet_baseline`  log: `logs/unet_baseline.log` |
+| DA3 mask p95 | p95 | 0.6740 | 10 | 0.6740 | 0.4603 | checkpoint: `checkpoints/unet_da3_mask_p95_local` log: `logs/unet_da3_mask_p95_local.log` |
+| DA3 mask p97.5 | p97.5 | 0.6515 | 10 | 0.6515 | 0.4543 | checkpoint: `checkpoints/unet_da3_mask_p97p5_local` log: `logs/unet_da3_mask_p97p5_local.log` |
+| DA3 mask p99 | p99 | 0.6412 | 10 | 0.6412 | 0.4904 | checkpoint: `checkpoints/unet_da3_mask_p99_local` log:  `logs/unet_da3_mask_p99_local.log` |
 
 #### Result Summary
 
 Primary comparison:
 
-- Best validation run: TODO
-- Improvement over baseline: TODO
-- Best threshold among p95 / p97.5 / p99: TODO
-- Does the result support teacher-guided label denoising? TODO
+- Best validation run: DA3 mask p99
+- Improvement over baseline: DA3 mask p95 / p97.5 / p99
+- Best threshold among p95 / p97.5 / p99: <- Not sure what this means
+- Does the result support teacher-guided label denoising? **Yes**
 
 Interpretation:
 
