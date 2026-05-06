@@ -40,6 +40,8 @@ wandb/
 mlruns/
 related papers/
 debug/
+teacher_masks/
+splits/
 
 # Local secrets / config
 .env
