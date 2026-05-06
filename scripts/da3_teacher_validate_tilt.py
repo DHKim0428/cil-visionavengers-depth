@@ -58,6 +58,8 @@ def target_path_for_variant(input_dir, prefix, variant):
         return input_dir / f"{prefix}_depth_aug.npy"
     if variant == "naive":
         return input_dir / f"{prefix}_depth_naive.npy"
+    if variant == "geo_geocalib":
+        return input_dir / f"{prefix}_depth_geo_geocalib.npy"
     if variant.startswith("naive_fov"):
         suffix = variant[len("naive_fov") :]
         return input_dir / f"{prefix}_depth_naive_fov{suffix}.npy"
@@ -70,6 +72,8 @@ def target_path_for_variant(input_dir, prefix, variant):
 
 
 def fov_suffix_for_variant(variant):
+    if variant == "geo_geocalib":
+        return "geocalib"
     if variant.startswith("geo_fov"):
         return variant[len("geo_fov") :]
     if variant.startswith("naive_fov"):
@@ -78,6 +82,8 @@ def fov_suffix_for_variant(variant):
 
 
 def rgb_path_for_variant(input_dir, prefix, variant):
+    if variant == "geo_geocalib":
+        return input_dir / f"{prefix}_rgb_aug_geocalib.png"
     suffix = fov_suffix_for_variant(variant)
     if suffix:
         variant_path = input_dir / f"{prefix}_rgb_aug_fov{suffix}.png"
@@ -87,6 +93,8 @@ def rgb_path_for_variant(input_dir, prefix, variant):
 
 
 def mask_path_for_variant(input_dir, prefix, variant):
+    if variant == "geo_geocalib":
+        return input_dir / f"{prefix}_mask_aug_geocalib.png"
     suffix = fov_suffix_for_variant(variant)
     if suffix:
         variant_path = input_dir / f"{prefix}_mask_aug_fov{suffix}.png"
@@ -377,10 +385,10 @@ def parse_args():
     parser.add_argument(
         "--target_variants",
         nargs="+",
-        default=["geo"],
+        default=["naive", "geo_fov50", "geo_fov60", "geo_fov70", "geo_geocalib"],
         help=(
             "Target variants to compare: naive, naive_fov50, geo/depth_aug, "
-            "geo_fov50, geo_fov60, ..."
+            "geo_fov50, geo_fov60, geo_geocalib, ..."
         ),
     )
     parser.add_argument("--save_predictions", action="store_true")

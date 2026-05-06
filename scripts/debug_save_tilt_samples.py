@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import os
@@ -38,6 +39,36 @@ def variant_name_for_fov(fov):
     return f"geo_fov{int(round(fov))}"
 
 
+def adaptive_suffix(variant_name):
+    return variant_name[len("geo_") :] if variant_name.startswith("geo_") else variant_name
+
+
+def load_fov_table(path, fov_column):
+    if path is None:
+        return None
+
+    table = {}
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"name", fov_column}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"FOV table {path} missing required columns: {sorted(missing)}")
+        for row in reader:
+            if row.get("status", "ok") != "ok":
+                continue
+            value = row.get(fov_column, "")
+            if value == "":
+                continue
+            fov = float(value)
+            if not math.isfinite(fov):
+                continue
+            table[row["name"]] = {**row, fov_column: fov}
+    if not table:
+        raise ValueError(f"No usable FOV rows found in {path}")
+    return table
+
+
 def resize_pair(rgb_path, depth_path, img_size):
     rgb = np.array(Image.open(rgb_path).convert("RGB"), dtype=np.float32) / 255.0
     depth = np.load(depth_path).astype(np.float32)
@@ -57,7 +88,7 @@ def resize_pair(rgb_path, depth_path, img_size):
     return rgb_t, depth_t, valid_mask
 
 
-def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
+def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_specs):
     _, height, width = image.shape
     device = image.device
     dtype = image.dtype
@@ -74,7 +105,7 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
 
     fov_outputs = {}
     primary_name = variant_name_for_fov(math.degrees(augmentation.fov_rad))
-    for fov in fov_variants:
+    for name, fov, metadata in fov_specs:
         old_fov = augmentation.fov_rad
         augmentation.fov_rad = math.radians(fov)
         try:
@@ -122,7 +153,6 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
         valid = valid & torch.isfinite(depth_geo.squeeze(0))
 
         mask_geo = valid.unsqueeze(0).float()
-        name = variant_name_for_fov(fov)
         fov_outputs[name] = {
             "image": image_aug,
             "depth_naive": depth_naive,
@@ -130,6 +160,7 @@ def compute_tilt_debug_outputs(image, depth, mask, augmentation, fov_variants):
             "alpha": alpha,
             "mask": mask_geo,
             "fov_deg": float(fov),
+            "metadata": metadata,
         }
 
     if primary_name not in fov_outputs:
@@ -257,6 +288,24 @@ def parse_args():
         default=None,
         help="FOV values for additional geometry-depth variants, e.g. 50 60 70",
     )
+    parser.add_argument(
+        "--fov_table",
+        type=str,
+        default=None,
+        help="Optional GeoCalib FOV CSV containing per-image adaptive FOV values.",
+    )
+    parser.add_argument(
+        "--adaptive_variant_name",
+        type=str,
+        default="geo_geocalib",
+        help="Target variant name for adaptive FOV outputs.",
+    )
+    parser.add_argument(
+        "--adaptive_fov_column",
+        type=str,
+        default="tilt_fov_deg",
+        help="Column in --fov_table to use as the adaptive tilt FOV in degrees.",
+    )
     return parser.parse_args()
 
 
@@ -294,6 +343,9 @@ def main():
     if args.save_naive:
         target_variants.append("naive")
     target_variants.extend(variant_name_for_fov(fov) for fov in fov_variants)
+    fov_table = load_fov_table(args.fov_table, args.adaptive_fov_column)
+    if fov_table is not None:
+        target_variants.append(args.adaptive_variant_name)
 
     samples = []
     for output_index, dataset_index in enumerate(sampled_indices.tolist()):
@@ -303,12 +355,34 @@ def main():
             raise FileNotFoundError(f"Missing depth map for {rgb_path}: {depth_path}")
 
         original_rgb, original_depth, original_mask = resize_pair(rgb_path, depth_path, args.img_size)
+        fov_specs = [
+            (variant_name_for_fov(fov), float(fov), {"source": "fixed", "fov_deg": float(fov)})
+            for fov in fov_variants
+        ]
+        adaptive_fov_record = None
+        if fov_table is not None:
+            if rgb_path.name not in fov_table:
+                raise KeyError(f"Missing adaptive FOV for {rgb_path.name} in {args.fov_table}")
+            adaptive_fov_record = fov_table[rgb_path.name]
+            adaptive_fov = float(adaptive_fov_record[args.adaptive_fov_column])
+            fov_specs.append(
+                (
+                    args.adaptive_variant_name,
+                    adaptive_fov,
+                    {
+                        "source": "fov_table",
+                        "fov_table": str(args.fov_table),
+                        "fov_column": args.adaptive_fov_column,
+                        "row": adaptive_fov_record,
+                    },
+                )
+            )
         outputs = compute_tilt_debug_outputs(
             original_rgb.clone(),
             original_depth.clone(),
             original_mask.clone(),
             augmentation,
-            fov_variants,
+            fov_specs,
         )
         primary_output = outputs["fov_outputs"][primary_variant]
         augmented_rgb = primary_output["image"]
@@ -333,14 +407,18 @@ def main():
             )
         fov_files = {}
         for variant_name, variant_output in outputs["fov_outputs"].items():
-            fov_value = int(round(variant_output["fov_deg"]))
             is_primary_variant = variant_name == primary_variant
-            depth_geo_path = output_dir / f"{prefix}_depth_geo_fov{fov_value}.npy"
-            alpha_path = output_dir / f"{prefix}_alpha_fov{fov_value}.npy"
-            rgb_variant_path = output_dir / f"{prefix}_rgb_aug_fov{fov_value}.png"
-            mask_variant_path = output_dir / f"{prefix}_mask_aug_fov{fov_value}.png"
-            naive_variant_path = output_dir / f"{prefix}_depth_naive_fov{fov_value}.npy"
-            debug_variant_path = output_dir / f"{prefix}_debug_fov{fov_value}.jpg"
+            if variant_name.startswith("geo_fov"):
+                fov_value = int(round(variant_output["fov_deg"]))
+                file_suffix = f"fov{fov_value}"
+            else:
+                file_suffix = adaptive_suffix(variant_name)
+            depth_geo_path = output_dir / f"{prefix}_depth_geo_{file_suffix}.npy"
+            alpha_path = output_dir / f"{prefix}_alpha_{file_suffix}.npy"
+            rgb_variant_path = output_dir / f"{prefix}_rgb_aug_{file_suffix}.png"
+            mask_variant_path = output_dir / f"{prefix}_mask_aug_{file_suffix}.png"
+            naive_variant_path = output_dir / f"{prefix}_depth_naive_{file_suffix}.npy"
+            debug_variant_path = output_dir / f"{prefix}_debug_{file_suffix}.jpg"
 
             np.save(
                 depth_geo_path,
@@ -384,6 +462,7 @@ def main():
                 "debug": debug_variant_path.name,
                 "debug_primary_alias": debug_path.name if is_primary_variant else None,
                 "fov_deg": variant_output["fov_deg"],
+                "metadata": variant_output.get("metadata", {}),
             }
         Image.fromarray(tensor_mask_to_uint8(augmented_mask)).save(mask_aug_path)
 
@@ -414,6 +493,7 @@ def main():
             "valid_pixels": valid_pixels,
             "primary_target": primary_variant,
             "fov_variants": fov_files,
+            "adaptive_fov": adaptive_fov_record,
         }
         if args.save_naive:
             sample_record["depth_naive"] = depth_naive_path.name
@@ -432,6 +512,9 @@ def main():
         "tilt_max_pitch_deg": args.tilt_max_pitch_deg,
         "tilt_fov_deg": args.tilt_fov_deg,
         "fov_variants": fov_variants,
+        "fov_table": str(args.fov_table) if args.fov_table else None,
+        "adaptive_variant_name": args.adaptive_variant_name if fov_table is not None else None,
+        "adaptive_fov_column": args.adaptive_fov_column if fov_table is not None else None,
         "target_variants": target_variants,
         "primary_target": primary_variant,
         "strict_fov_rgb_warp": True,
