@@ -1,0 +1,30 @@
+{
+  "data_root": "/workspace/datasets/monocular-depth-estimation/train",
+  "output_dir": "/workspace/cil-visionavengers-depth/debug/geocalib_fov_full_clip20",
+  "geocalib_repo": null,
+  "weights": "pinhole",
+  "device": "cuda",
+  "clip_min_deg": 20.0,
+  "clip_max_deg": 95.0,
+  "num_images": 22605,
+  "num_ok": 22605,
+  "num_error": 0,
+  "num_clipped": 1100,
+  "fov_column_for_tilt": "tilt_fov_deg",
+  "fov_convention": "horizontal field of view in degrees, clipped per image",
+  "csv": "geocalib_fov.csv",
+  "tilt_fov_deg_stats": {
+    "min": 20.0,
+    "p05": 20.133767307042707,
+    "median": 38.21515429303146,
+    "mean": 38.63034914749221,
+    "p95": 58.4671405632855,
+    "max": 95.0
+  },
+  "hfov_deg_raw_stats": {
+    "min": 4.999999000772815,
+    "median": 38.21515429303146,
+    "mean": 38.4756803819263,
+    "max": 106.12788230481915
+  }
+}
