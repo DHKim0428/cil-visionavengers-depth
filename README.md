@@ -54,3 +54,49 @@ Below are the results achieved using the default parameters provided in `train.p
 - **Training Time**: Approx. 35 mins on RTX 5060 Ti.
 
 ---
+
+## SLURM training scripts
+
+Cluster jobs live in `scripts/slurm/`. They keep the U-Net baseline batch size
+(`--batch_size 8`) and write checkpoints/logs/splits under:
+
+```bash
+/work/scratch/$USER/cil-visionavengers-depth
+```
+
+Quick smoke test for the tilt data pipeline:
+
+```bash
+sbatch scripts/slurm/smoke_unet_tilt.sbatch
+```
+
+Full baseline run:
+
+```bash
+sbatch scripts/slurm/train_unet_baseline.sbatch
+```
+
+Full run with only standard augmentations enabled:
+
+```bash
+sbatch scripts/slurm/train_unet_basic_aug.sbatch
+```
+
+Full geometry-consistent tilt run, using the same train/val split as baseline:
+
+```bash
+sbatch scripts/slurm/train_unet_tilt_geometry.sbatch
+```
+
+Weaker geometry tilt preset (`prob=0.25`, `yaw/pitch=3 deg`):
+
+```bash
+sbatch scripts/slurm/train_unet_tilt_geometry_weak.sbatch
+```
+
+Useful overrides:
+
+```bash
+sbatch --export=ALL,NUM_EPOCHS=3 scripts/slurm/train_unet_baseline.sbatch
+sbatch --export=ALL,TILT_PROB=0.75,TILT_MAX_YAW_DEG=8,TILT_MAX_PITCH_DEG=8 scripts/slurm/train_unet_tilt_geometry.sbatch
+```
