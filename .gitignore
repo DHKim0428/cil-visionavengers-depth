@@ -26,6 +26,7 @@ dist/
 
 # Logs
 *.log
+slurm-*.out
 
 # Data and model artifacts
 data/
@@ -38,6 +39,9 @@ artifacts/
 wandb/
 mlruns/
 related papers/
+debug/
+teacher_masks/
+splits/
 
 # Local secrets / config
 .env
