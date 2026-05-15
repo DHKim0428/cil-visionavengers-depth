@@ -126,22 +126,22 @@ class UNetRefinement(nn.Module):
     """
     def __init__(self):
         super().__init__()
-        self.enc1 = DoubleConv(4, 32)
+        self.enc1 = DoubleConv(4, 16)
         self.pool1 = nn.MaxPool2d(2)
-        self.enc2 = DoubleConv(32, 64)
+        self.enc2 = DoubleConv(16, 32)
         self.pool2 = nn.MaxPool2d(2)
-        self.enc3 = DoubleConv(64, 128)
+        self.enc3 = DoubleConv(32, 64)
         self.pool3 = nn.MaxPool2d(2)
-        self.bottleneck = DoubleConv(128, 256)
+        self.bottleneck = DoubleConv(64, 128)
 
-        self.up3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
-        self.dec3 = DoubleConv(256, 128)
-        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
-        self.dec2 = DoubleConv(128, 64)
-        self.up1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
-        self.dec1 = DoubleConv(64, 32)
+        self.up3 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.dec3 = DoubleConv(128, 64)
+        self.up2 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
+        self.dec2 = DoubleConv(64, 32)
+        self.up1 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
+        self.dec1 = DoubleConv(32, 16)
 
-        self.out_conv = nn.Conv2d(32, 1, kernel_size=1)
+        self.out_conv = nn.Conv2d(16, 1, kernel_size=1)
         nn.init.zeros_(self.out_conv.weight)
         nn.init.zeros_(self.out_conv.bias)
 
@@ -157,11 +157,11 @@ class UNetRefinement(nn.Module):
         b  = self.bottleneck(self.pool3(e3))
 
         u3 = F.interpolate(self.up3(b),  size=e3.shape[-2:], mode='bilinear', align_corners=False)
-        d3 = self.dec3(torch.cat([u3, e3], dim=1))
+        d3 = self.dec3(torch.cat([u3, e3], dim=1))   # 64+64 → 64
         u2 = F.interpolate(self.up2(d3), size=e2.shape[-2:], mode='bilinear', align_corners=False)
-        d2 = self.dec2(torch.cat([u2, e2], dim=1))
+        d2 = self.dec2(torch.cat([u2, e2], dim=1))   # 32+32 → 32
         u1 = F.interpolate(self.up1(d2), size=e1.shape[-2:], mode='bilinear', align_corners=False)
-        d1 = self.dec1(torch.cat([u1, e1], dim=1))
+        d1 = self.dec1(torch.cat([u1, e1], dim=1))   # 16+16 → 16
 
         delta = self.out_conv(d1).squeeze(1)     # [B, H, W]  log-space correction
         return d_prior * torch.exp(delta)        # D_final = D_prior · exp(Δ)
