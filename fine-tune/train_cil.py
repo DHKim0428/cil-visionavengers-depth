@@ -21,10 +21,9 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-REPO        = '/work/courses/3dv/team24/Depth-Anything-V2'
-METRIC_REPO = os.path.join(REPO, 'metric_depth')
+REPO = '/work/courses/3dv/team24/Depth-Anything-V2'
 sys.path.insert(0, REPO)
-sys.path.insert(0, METRIC_REPO)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from depth_anything_v2.dpt import DepthAnythingV2
 from dataset.cil import CILDepth
