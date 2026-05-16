@@ -1,6 +1,13 @@
-experiment: da2_vits_decoder
+experiment: da2_vits_lora_full
 model: da2_vits
-trainable: decoder
+trainable: frozen
+adapter:
+  enabled: true
+  type: lora
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: all-linear
 data:
   dataset: cil_depth
   root: /cluster/courses/cil/monocular-depth-estimation/train

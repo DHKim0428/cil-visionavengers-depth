@@ -1,38 +1,13 @@
-experiment:
-  name: da2_vits_refinenets_output_lora
-  tags:
-  - da2
-  - vits
-  - refinenets_output
-  - lora
-model:
-  family: da2_relative
-  encoder: vits
-base:
-  trainable_scope: refinenets_output
+experiment: da2_vits_refinenets_output_lora
+model: da2_vits
+trainable: refinenets_output
 data:
   dataset: cil_depth
   root: /cluster/courses/cil/monocular-depth-estimation/train
-  eval_protocol: native_resolution
   val_fraction: 0.05
   split_seed: 42
   image_size: 518
-  views:
-    train:
-      resize_policy: dpt_lower_bound
-      output_grid: model_input
-      crop_size: image_size
-      normalize: imagenet
-    eval:
-      resize_policy: dpt_lower_bound
-      output_grid: native_gt
-      crop_size: null
-      normalize: imagenet
-augmentation:
-  preset: none
-supervision:
-  teacher_mask:
-    enabled: false
+augmentation: basic
 train:
   epochs: 10
   batch_size: 8
@@ -59,8 +34,9 @@ adapter:
   rank: 8
   alpha: 16
   dropout: 0.05
-  target:
-    mode: trainable_scope
+  target_prefixes:
+  - depth_head.scratch.refinenet
+  - depth_head.scratch.output_conv
 checkpoint:
   save_policy: trainable_only
   keep_latest: true

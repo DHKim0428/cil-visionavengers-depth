@@ -11,7 +11,7 @@ set -euo pipefail
 # Canonical unified depth-evaluation wrapper.
 # Examples:
 #   sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_refinenets_output.yaml,RUN_NAME=r5_vits_zero_shot scripts/slurm/eval.sbatch
-#   sbatch --export=ALL,CONFIG=configs/experiments/unet_baseline_eval.yaml,CHECKPOINT=/work/scratch/$USER/cil-visionavengers-depth/checkpoints/unet_epoch_10.pth,RUN_NAME=r5_unet_baseline scripts/slurm/eval.sbatch
+#   sbatch --export=ALL,CONFIG=configs/experiments/unet_baseline.yaml,CHECKPOINT=/work/scratch/$USER/cil-visionavengers-depth/checkpoints/unet_epoch_10.pth,RUN_NAME=r5_unet_baseline scripts/slurm/eval.sbatch
 
 source ~/.bashrc || true
 module load cuda/12.6.0 || true
@@ -47,9 +47,6 @@ ARGS=(
 if [[ -n "${CHECKPOINT:-}" ]]; then
     ARGS+=(--checkpoint "$CHECKPOINT")
 fi
-if [[ -n "${PROTOCOL:-}" ]]; then
-    ARGS+=(--protocol "$PROTOCOL")
-fi
 if [[ -n "${OUTPUT_DIR:-}" ]]; then
     ARGS+=(--output-dir "$OUTPUT_DIR")
 fi
@@ -59,11 +56,17 @@ fi
 if [[ -n "${SPLIT_FILE:-}" ]]; then
     ARGS+=(--split-file "$SPLIT_FILE")
 fi
+if [[ -n "${VAL_FRACTION:-}" ]]; then
+    ARGS+=(--val-fraction "$VAL_FRACTION")
+fi
 if [[ -n "${MAX_SAMPLES:-}" ]]; then
     ARGS+=(--max-samples "$MAX_SAMPLES")
 fi
 if [[ -n "${FRACTION:-}" ]]; then
     ARGS+=(--fraction "$FRACTION")
+fi
+if [[ -n "${SAVE_IMAGES:-}" ]]; then
+    ARGS+=(--save-images "$SAVE_IMAGES")
 fi
 if [[ "${NO_WANDB:-0}" == "1" ]]; then
     ARGS+=(--no-wandb)
@@ -75,9 +78,9 @@ fi
 echo "[eval.sbatch] repo=$REPO_DIR"
 echo "[eval.sbatch] config=$CONFIG"
 echo "[eval.sbatch] run=$RUN_NAME"
-echo "[eval.sbatch] protocol=${PROTOCOL:-config-default}"
 echo "[eval.sbatch] checkpoint=${CHECKPOINT:-config/default}"
 echo "[eval.sbatch] data_root=$DATA_ROOT"
+echo "[eval.sbatch] val_fraction=${VAL_FRACTION:-config-default}"
 echo "[eval.sbatch] command: python eval.py ${ARGS[*]}"
 
 python eval.py "${ARGS[@]}" 2>&1 | tee "$LOG_DIR/$RUN_NAME.log"

@@ -8,3 +8,4 @@ tqdm
 tensorboard
 wandb
 PyYAML
+peft

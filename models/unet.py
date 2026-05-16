@@ -2,10 +2,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-
-PREDICTION_KINDS = {"disparity", "depth", "legacy_normalized_depth"}
 
 
 class DoubleConv(nn.Module):
@@ -25,22 +21,16 @@ class DoubleConv(nn.Module):
 
 
 class UNetBaseline(nn.Module):
-    """Canonical U-Net with configurable dense-output semantics.
+    """Simple TA-style U-Net baseline.
 
-    ``disparity`` and ``depth`` use a positive softplus head for new canonical
-    runs. ``legacy_normalized_depth`` preserves the old sigmoid head so historical
-    baseline checkpoints remain loadable/evaluable without changing their meaning.
+    The head returns one positive depth-like map via sigmoid.  We do not give
+    U-Net a separate disparity/depth mode; evaluation uses the same siRMSE path
+    as DA2. Since siRMSE is scale-invariant, the sigmoid output scale is not a
+    separate evaluation convention.
     """
 
-    def __init__(self, *, prediction_kind: str = "disparity", eps: float = 1e-6) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        if prediction_kind not in PREDICTION_KINDS:
-            raise ValueError(
-                f"Unsupported U-Net prediction_kind={prediction_kind!r}; expected one of {sorted(PREDICTION_KINDS)}"
-            )
-        self.prediction_kind = prediction_kind
-        self.eps = eps
-
         self.enc1 = DoubleConv(3, 32)
         self.pool1 = nn.MaxPool2d(2)
         self.enc2 = DoubleConv(32, 64)
@@ -64,10 +54,7 @@ class UNetBaseline(nn.Module):
         d3 = self.dec3(torch.cat([self.up3(b), e3], dim=1))
         d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
         d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
-        raw = self.out_conv(d1)
-        if self.prediction_kind == "legacy_normalized_depth":
-            return torch.sigmoid(raw)
-        return F.softplus(raw) + self.eps
+        return torch.sigmoid(self.out_conv(d1))
 
 
 def parameter_summary(model: nn.Module) -> dict[str, int | float]:

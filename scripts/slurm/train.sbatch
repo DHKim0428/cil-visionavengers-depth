@@ -48,6 +48,9 @@ if [[ -n "${BATCH_SIZE:-}" ]]; then ARGS+=(--batch-size "$BATCH_SIZE"); fi
 if [[ -n "${IMG_SIZE:-}" ]]; then ARGS+=(--img-size "$IMG_SIZE"); fi
 if [[ -n "${NUM_WORKERS:-}" ]]; then ARGS+=(--num-workers "$NUM_WORKERS"); fi
 if [[ -n "${MAX_SAMPLES:-}" ]]; then ARGS+=(--max-samples "$MAX_SAMPLES"); fi
+if [[ -n "${SCHEDULER:-}" ]]; then ARGS+=(--scheduler "$SCHEDULER"); fi
+if [[ -n "${GRAD_ACCUM_STEPS:-}" ]]; then ARGS+=(--grad-accum-steps "$GRAD_ACCUM_STEPS"); fi
+if [[ -n "${LOG_EVERY:-}" ]]; then ARGS+=(--log-every "$LOG_EVERY"); fi
 if [[ -n "${SAVE_POLICY:-}" ]]; then ARGS+=(--save-policy "$SAVE_POLICY"); fi
 if [[ "${DRY_RUN:-0}" == "1" ]]; then ARGS+=(--dry-run); fi
 

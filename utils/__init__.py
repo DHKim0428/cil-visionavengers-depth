@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import os
@@ -40,37 +39,36 @@ def load_config(path: str | Path) -> dict[str, Any]:
         cfg = yaml.safe_load(f) or {}
     if not isinstance(cfg, dict):
         raise ValueError(f"Config must be a YAML mapping: {path}")
+    if isinstance(cfg.get("experiment"), str):
+        cfg["experiment"] = {"name": cfg["experiment"]}
     return expand(cfg)
 
 
-def load_augmentation_config(section: dict[str, Any] | None) -> dict[str, Any]:
-    section = copy.deepcopy(section or {"preset": "none"})
-    preset = section.pop("preset", None)
-    if preset is None:
-        return expand(section)
+def load_augmentation_config(section: Any | None) -> dict[str, Any]:
+    if section is None:
+        preset, overrides = "none", {}
+    elif isinstance(section, str):
+        preset, overrides = section, {}
+    else:
+        overrides = dict(section)
+        preset = overrides.pop("preset", overrides.pop("name", "none"))
     path = Path("configs") / "augmentations" / f"{preset}.yaml"
     with path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
-    cfg.update(section)
+    cfg.update(overrides)
     return expand(cfg)
-
-
-def set_nested(cfg: dict[str, Any], dotted: str, value: Any) -> None:
-    cur = cfg
-    parts = dotted.split(".")
-    for part in parts[:-1]:
-        cur = cur.setdefault(part, {})
-    cur[parts[-1]] = value
-
 
 def apply_overrides(cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    cfg = copy.deepcopy(cfg)
     for key, value in overrides.items():
-        if value is not None:
-            set_nested(cfg, key, value)
+        if value is None:
+            continue
+        cur = cfg
+        parts = key.split(".")
+        for part in parts[:-1]:
+            cur = cur.setdefault(part, {})
+        cur[parts[-1]] = value
     cfg["augmentation"] = load_augmentation_config(cfg.get("augmentation"))
     return expand(cfg)
-
 
 def seed_everything(seed: int) -> None:
     random.seed(seed)
@@ -104,7 +102,6 @@ def maybe_wandb(cfg: dict[str, Any], run_dir: Path, job_type: str):
         entity=log_cfg.get("entity"),
         project=log_cfg.get("project"),
         name=cfg.get("experiment", {}).get("name"),
-        tags=cfg.get("experiment", {}).get("tags", []),
         config=cfg,
         dir=str(run_dir),
         job_type=job_type,

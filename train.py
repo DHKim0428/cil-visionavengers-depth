@@ -17,14 +17,15 @@ import torch.nn.functional as F
 from torch.optim import Adam, AdamW
 from tqdm import tqdm
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dataset.data_loader import build_cil_loaders
-from models.da2 import build_da2, parameter_counts, trainable_state
+from utils.eval import evaluate_names
+from models.da2 import build_da2
 from models.unet import UNetBaseline
-from utils.loss import EPS, MAX_DEPTH, MIN_DEPTH, sirmse
+from utils.loss import sirmse
 from utils import DEFAULT_CONFIG, apply_overrides, load_config, make_run_dir, maybe_wandb, save_json, save_yaml, seed_everything, setup_logging
 
 LOGGER = logging.getLogger("cil_depth")
@@ -44,72 +45,42 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num-workers", type=int)
     p.add_argument("--max-samples", type=int)
     p.add_argument("--scheduler", choices=["constant", "poly_decay"])
+    p.add_argument("--grad-accum-steps", type=int)
+    p.add_argument("--log-every", type=int)
     p.add_argument("--save-policy", choices=["trainable_only", "full_model"])
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
 
-def build_model(cfg: dict[str, Any]) -> tuple[torch.nn.Module, str, Path | None]:
-    family = cfg["model"]["family"]
-    if family == "da2_relative":
-        model, base_ckpt = build_da2(cfg)
-        return model, "disparity", base_ckpt
-    if family == "unet":
-        kind = cfg["model"].get("prediction_kind", "disparity")
-        if kind not in {"disparity", "depth"}:
-            raise ValueError("U-Net training supports prediction_kind: disparity or depth")
-        return UNetBaseline(prediction_kind=kind), kind, None
-    raise ValueError(f"Unknown model.family: {family}")
+def build_model(cfg: dict[str, Any]) -> tuple[torch.nn.Module, Path | None]:
+    model_name = cfg["model"]
+    if isinstance(model_name, str) and model_name.startswith("da2_"):
+        return build_da2(cfg)
+    if model_name == "unet":
+        return UNetBaseline(), None
+    raise ValueError(f"Unknown model: {model_name}")
 
 
-def pred_to_depth(pred: torch.Tensor, kind: str) -> torch.Tensor:
-    if pred.ndim == 4 and pred.shape[1] == 1:
-        pred = pred[:, 0]
-    if kind == "disparity":
-        pred = torch.nan_to_num(pred, nan=EPS, posinf=1.0 / MIN_DEPTH, neginf=EPS).clamp_min(EPS)
-        return (1.0 / pred).clamp(MIN_DEPTH, MAX_DEPTH)
-    return torch.nan_to_num(pred, nan=MIN_DEPTH, posinf=MAX_DEPTH, neginf=MIN_DEPTH).clamp(MIN_DEPTH, MAX_DEPTH)
-
-
-def forward_on_depth_grid(model: torch.nn.Module, image: torch.Tensor, depth: torch.Tensor) -> torch.Tensor:
+def forward_on_depth_grid(model: torch.nn.Module, image: torch.Tensor, depth: torch.Tensor, invert_output: bool) -> torch.Tensor:
     pred = model(image)
     if pred.ndim == 4 and pred.shape[1] == 1:
         pred = pred[:, 0]
+    if invert_output:
+        pred = 1.0 / pred.clamp_min(1e-6)
     if pred.shape[-2:] != depth.shape[-2:]:
         pred = F.interpolate(pred[:, None], size=depth.shape[-2:], mode="bilinear", align_corners=False)[:, 0]
     return pred
 
 
-def batch_sirmse_loss(pred: torch.Tensor, depth: torch.Tensor, valid: torch.Tensor, kind: str) -> torch.Tensor:
-    pred_depth = pred_to_depth(pred, kind)
-    losses = []
-    for i in range(depth.shape[0]):
-        score = sirmse(pred_depth[i], depth[i], valid[i])
-        if score is not None:
-            losses.append(score)
-    return torch.stack(losses).mean() if losses else pred_depth.sum() * 0.0
-
-
-@torch.no_grad()
-def evaluate(model: torch.nn.Module, loader, device: torch.device, kind: str) -> float:
-    model.eval()
-    scores = []
-    for batch in tqdm(loader, desc="val", leave=False):
-        image = batch["image"].to(device)
-        depth = batch["depth"].to(device)
-        valid = batch["valid_mask"].to(device)
-        pred_depth = pred_to_depth(forward_on_depth_grid(model, image, depth), kind)
-        for i in range(depth.shape[0]):
-            score = sirmse(pred_depth[i], depth[i], valid[i])
-            if score is not None:
-                scores.append(float(score.item()))
-    return float(np.mean(scores)) if scores else float("nan")
+def batch_sirmse_loss(pred_depth: torch.Tensor, depth: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    losses = [sirmse(pred_depth[i], depth[i], valid[i]) for i in range(depth.shape[0])]
+    return torch.stack(losses).mean()
 
 
 def save_checkpoint(path: Path, cfg: dict[str, Any], model: torch.nn.Module, optimizer, scaler, epoch: int, global_step: int, best: float, val: float, base_ckpt: Path | None, include_optimizer: bool) -> None:
     policy = cfg.get("checkpoint", {}).get("save_policy", "trainable_only")
-    if policy == "trainable_only" and cfg["model"]["family"] == "da2_relative":
-        payload = {"format": "trainable_only", "trainable": trainable_state(model), "base_checkpoint": str(base_ckpt)}
+    if policy == "trainable_only" and str(cfg["model"]).startswith("da2_"):
+        payload = {"format": "trainable_only", "trainable": {name: p.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}, "base_checkpoint": str(base_ckpt)}
     else:
         payload = {"format": "full_model", "model": {k: v.detach().cpu() for k, v in model.state_dict().items()}}
     payload.update({"config": cfg, "epoch": epoch, "global_step": global_step, "best_sirmse": best, "val_sirmse": val})
@@ -152,6 +123,8 @@ def main() -> None:
         "train.batch_size": args.batch_size,
         "train.num_workers": args.num_workers,
         "train.scheduler": args.scheduler,
+        "train.grad_accum_steps": args.grad_accum_steps,
+        "logging.log_every": args.log_every,
         "data.image_size": args.img_size,
         "data.max_samples": args.max_samples,
         "checkpoint.save_policy": args.save_policy,
@@ -171,12 +144,13 @@ def main() -> None:
     save_yaml(run_dir / "effective_config.yaml", cfg)
     wandb_run = maybe_wandb(cfg, run_dir, job_type="train")
 
-    train_loader, val_loader, train_names, val_names = build_cil_loaders(cfg)
-    model, kind, base_ckpt = build_model(cfg)
+    train_loader, _, train_names, val_names = build_cil_loaders(cfg)
+    model, base_ckpt = build_model(cfg)
     model.to(device)
-    counts = parameter_counts(model) if cfg["model"]["family"] == "da2_relative" else {"total": sum(p.numel() for p in model.parameters()), "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad)}
-    counts.setdefault("frozen", counts["total"] - counts["trainable"])
-    counts.setdefault("trainable_pct", 100.0 * counts["trainable"] / counts["total"] if counts["total"] else 0.0)
+    invert_output = str(cfg["model"]).startswith("da2_")
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    counts = {"total": total, "trainable": trainable, "frozen": total - trainable, "trainable_pct": 100.0 * trainable / total if total else 0.0}
     LOGGER.info("Output dir  : %s", run_dir)
     LOGGER.info("Samples     : train=%d val=%d", len(train_names), len(val_names))
     LOGGER.info("Params      : total=%s trainable=%s frozen=%s trainable=%.2f%%", f"{counts['total']:,}", f"{counts['trainable']:,}", f"{counts['frozen']:,}", counts["trainable_pct"])
@@ -193,6 +167,7 @@ def main() -> None:
 
     epochs = int(train_cfg.get("epochs", 10))
     grad_accum = max(1, int(train_cfg.get("grad_accum_steps", 1)))
+    log_every = max(1, int(cfg.get("logging", {}).get("log_every", 50)))
     scheduler = train_cfg.get("scheduler", "constant")
     total_steps = max(1, math.ceil(len(train_loader) / grad_accum) * max(1, epochs - start_epoch + 1))
     history = []
@@ -206,8 +181,9 @@ def main() -> None:
             depth = batch["depth"].to(device)
             valid = batch["valid_mask"].to(device)
             with torch.cuda.amp.autocast(enabled=amp):
-                loss = batch_sirmse_loss(forward_on_depth_grid(model, image, depth), depth, valid, kind) / grad_accum
+                loss = batch_sirmse_loss(forward_on_depth_grid(model, image, depth, invert_output), depth, valid) / grad_accum
             scaler.scale(loss).backward()
+            loss_value = float(loss.item() * grad_accum)
             if step % grad_accum == 0 or step == len(train_loader):
                 scaler.step(optimizer)
                 scaler.update()
@@ -219,9 +195,17 @@ def main() -> None:
                         group["lr"] = lr * (1.0 - progress) ** 0.9
                 elif scheduler != "constant":
                     raise ValueError(f"Unknown scheduler: {scheduler}")
-            losses.append(float(loss.item() * grad_accum))
+                if wandb_run and (global_step == 1 or global_step % log_every == 0):
+                    wandb_run.log({
+                        "train/step_loss": loss_value,
+                        "train/lr": optimizer.param_groups[0]["lr"],
+                        "train/epoch": epoch,
+                        "train/epoch_progress": step / len(train_loader),
+                    }, step=global_step)
+            losses.append(loss_value)
 
-        val = evaluate(model, val_loader, device, kind)
+        val_result = evaluate_names(model, cfg, val_names, device)
+        val = val_result["summary"]["sirmse_mean"]
         train_loss = float(np.mean(losses)) if losses else float("nan")
         history.append({"epoch": epoch, "train_loss": train_loss, "val_sirmse": val})
         LOGGER.info("Epoch %d/%d train_loss=%.4f val_siRMSE=%.4f", epoch, epochs, train_loss, val)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,10 +19,6 @@ TRAINABLE_PREFIXES = {
 }
 
 
-def default_checkpoint_path(cfg: dict[str, Any]) -> Path:
-    return Path(cfg["paths"]["da2_checkpoint_dir"]) / f"depth_anything_v2_{cfg['model']['encoder']}.pth"
-
-
 def import_da2(repo: str | Path):
     repo = Path(repo)
     if not repo.exists():
@@ -36,16 +31,23 @@ def import_da2(repo: str | Path):
 
 
 def build_da2(cfg: dict[str, Any]) -> tuple[nn.Module, Path]:
-    ckpt = Path(cfg.get("paths", {}).get("checkpoint") or default_checkpoint_path(cfg))
+    model_name = cfg["model"]
+    if not isinstance(model_name, str) or not model_name.startswith("da2_"):
+        raise ValueError(f"DA2 config expects model like da2_vits, got {model_name!r}")
+    encoder = model_name.removeprefix("da2_")
+    if encoder not in DA2_CONFIGS:
+        raise ValueError(f"Unsupported DA2 model: {model_name}")
+
+    ckpt = cfg.get("paths", {}).get("checkpoint")
+    ckpt = Path(ckpt) if ckpt else Path(cfg["paths"]["da2_checkpoint_dir"]) / f"depth_anything_v2_{encoder}.pth"
     if not ckpt.exists():
         raise FileNotFoundError(f"DA2 checkpoint not found: {ckpt}")
 
-    encoder = cfg["model"]["encoder"]
     model = import_da2(cfg["paths"]["da2_repo"])(**DA2_CONFIGS[encoder])
     payload = torch.load(ckpt, map_location="cpu")
     model.load_state_dict(payload.get("model", payload) if isinstance(payload, dict) else payload, strict=True)
 
-    scope = cfg.get("base", {}).get("trainable_scope", "frozen")
+    scope = cfg.get("trainable", "frozen")
     for name, p in model.named_parameters():
         if scope == "frozen":
             p.requires_grad = False
@@ -54,50 +56,35 @@ def build_da2(cfg: dict[str, Any]) -> tuple[nn.Module, Path]:
         elif scope in TRAINABLE_PREFIXES:
             p.requires_grad = any(name.startswith(prefix) for prefix in TRAINABLE_PREFIXES[scope])
         else:
-            raise ValueError(f"Unknown DA2 trainable_scope: {scope}")
+            raise ValueError(f"Unknown DA2 trainable: {scope}")
 
     if cfg.get("adapter", {}).get("enabled", False):
-        add_lora(model, cfg["adapter"])
+        model = add_lora(model, cfg["adapter"])
     return model, ckpt
 
 
-class LoRALinear(nn.Module):
-    def __init__(self, base: nn.Linear, rank: int, alpha: float) -> None:
-        super().__init__()
-        self.base = base
-        self.scale = alpha / rank
-        self.A = nn.Linear(base.in_features, rank, bias=False)
-        self.B = nn.Linear(rank, base.out_features, bias=False)
-        nn.init.kaiming_uniform_(self.A.weight, a=5 ** 0.5)
-        nn.init.zeros_(self.B.weight)
+def add_lora(model: nn.Module, cfg: dict[str, Any]) -> nn.Module:
+    if cfg.get("type") != "lora":
+        raise ValueError(f"Unsupported adapter type: {cfg.get('type')}")
+    try:
+        from peft import LoraConfig, get_peft_model
+    except ImportError as exc:
+        raise ImportError("LoRA requires `peft`. Run `python -m pip install -r requirements.txt`.") from exc
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.base(x) + self.B(self.A(x)) * self.scale
+    target_modules = cfg.get("target_modules")
+    if not target_modules:
+        prefixes = cfg.get("target_prefixes") or []
+        target_modules = [name for name, module in model.named_modules() if isinstance(module, nn.Linear) and any(name.startswith(prefix) for prefix in prefixes)]
+    if not target_modules:
+        raise ValueError("LoRA adapter needs `target_modules` or non-empty `target_prefixes`.")
 
-
-def add_lora(model: nn.Module, cfg: dict[str, Any]) -> None:
-    rank = int(cfg.get("rank", 8))
-    alpha = float(cfg.get("alpha", rank))
-    target = cfg.get("target", {}) or {}
-    mode = target.get("mode", "trainable_scope")
-    patterns = target.get("patterns", [])
-
-    replacements = []
-    for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear) or name.endswith(".A") or name.endswith(".B"):
-            continue
-        if mode == "trainable_scope" and not any(p.requires_grad for p in module.parameters(recurse=False)):
-            continue
-        if mode == "decoder" and not name.startswith("depth_head"):
-            continue
-        if mode == "regex" and not any(re.search(p, name) for p in patterns):
-            continue
-        replacements.append((name, LoRALinear(module, rank, alpha)))
-
-    for name, wrapped in replacements:
-        parent_name, child = name.rsplit(".", 1) if "." in name else ("", name)
-        parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, child, wrapped)
+    return get_peft_model(model, LoraConfig(
+        r=int(cfg.get("rank", 8)),
+        lora_alpha=int(cfg.get("alpha", cfg.get("rank", 8))),
+        lora_dropout=float(cfg.get("dropout", 0.0)),
+        target_modules=target_modules,
+        bias="none",
+    ))
 
 
 def load_training_checkpoint(model: nn.Module, path: str | Path) -> dict[str, Any]:
@@ -105,21 +92,9 @@ def load_training_checkpoint(model: nn.Module, path: str | Path) -> dict[str, An
     if payload.get("format") == "trainable_only":
         state = model.state_dict()
         state.update(payload.get("trainable", {}))
-        state.update(payload.get("adapter", {}))
-        state.update(payload.get("trainable_base", {}))
         model.load_state_dict(state, strict=True)
     elif "model" in payload:
         model.load_state_dict(payload["model"], strict=True)
     else:
         model.load_state_dict(payload, strict=True)
     return payload
-
-
-def trainable_state(model: nn.Module) -> dict[str, torch.Tensor]:
-    return {name: p.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}
-
-
-def parameter_counts(model: nn.Module) -> dict[str, float | int]:
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return {"total": total, "trainable": trainable, "frozen": total - trainable, "trainable_pct": 100.0 * trainable / total if total else 0.0}

@@ -45,6 +45,14 @@ sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_refinenets_output.yaml,R
 sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_zero_shot.yaml,RUN_NAME=da2_eval scripts/slurm/eval.sbatch
 ```
 
+## Evaluation semantics
+
+The canonical metric is implemented locally from `docs/project_spec.md`:
+siRMSE is computed on ground-truth-valid pixels, where `0.001 <= gt <= 80`.
+DA2 upstream code is used for model loading/inference preprocessing, but not for
+the project metric. DA2 relative outputs are treated directly as positive
+relative depth, not inverted as disparity.
+
 ## Current structure
 
 ```text
