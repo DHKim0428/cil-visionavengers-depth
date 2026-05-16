@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=depth-eval
+#SBATCH --job-name=depth-protocol-compare
 #SBATCH --account=cil
 #SBATCH --time=01:00:00
 #SBATCH --gpus 2080ti:1
@@ -7,11 +7,6 @@
 #SBATCH --output=slurm-%x-%j.out
 
 set -euo pipefail
-
-# Canonical unified depth-evaluation wrapper.
-# Examples:
-#   sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_refinenets_output.yaml,RUN_NAME=r5_vits_zero_shot scripts/slurm/eval.sbatch
-#   sbatch --export=ALL,CONFIG=configs/experiments/unet_baseline.yaml,CHECKPOINT=/work/scratch/$USER/cil-visionavengers-depth/checkpoints/unet_epoch_10.pth,RUN_NAME=r5_unet_baseline scripts/slurm/eval.sbatch
 
 source ~/.bashrc || true
 module load cuda/12.6.0 || true
@@ -31,8 +26,8 @@ fi
 REPO_DIR="${REPO_DIR:-$HOME/workspace/cil-visionavengers-depth}"
 SCRATCH_ROOT="${SCRATCH_ROOT:-/work/scratch/$USER/cil-visionavengers-depth}"
 DATA_ROOT="${DATA_ROOT:-/cluster/courses/cil/monocular-depth-estimation/train}"
-CONFIG="${CONFIG:-configs/experiments/da2_vits_refinenets_output.yaml}"
-RUN_NAME="${RUN_NAME:-depth_eval_${SLURM_JOB_ID:-local}}"
+CONFIG="${CONFIG:-configs/experiments/da2_vits_zero_shot.yaml}"
+RUN_NAME="${RUN_NAME:-protocol_compare_${SLURM_JOB_ID:-local}}"
 LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs}"
 
 mkdir -p "$LOG_DIR" "$SCRATCH_ROOT/evaluations"
@@ -65,34 +60,15 @@ fi
 if [[ -n "${FRACTION:-}" ]]; then
     ARGS+=(--fraction "$FRACTION")
 fi
-if [[ -n "${SAVE_IMAGES:-}" ]]; then
-    ARGS+=(--save-images "$SAVE_IMAGES")
-fi
-if [[ "${SCALE_DEPTH_PERCENTILE:-0}" == "1" ]]; then
-    ARGS+=(--scale-depth-percentile)
-fi
-if [[ -n "${SCALE_PERCENTILE:-}" ]]; then
-    ARGS+=(--scale-percentile "$SCALE_PERCENTILE")
-fi
-if [[ -n "${SCALE_TARGET:-}" ]]; then
-    ARGS+=(--scale-target "$SCALE_TARGET")
-fi
-if [[ -n "${SCALE_MAX_CLIP:-}" ]]; then
-    ARGS+=(--scale-max-clip "$SCALE_MAX_CLIP")
-fi
-if [[ "${NO_WANDB:-0}" == "1" ]]; then
-    ARGS+=(--no-wandb)
-fi
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     ARGS+=(--dry-run)
 fi
 
-echo "[eval.sbatch] repo=$REPO_DIR"
-echo "[eval.sbatch] config=$CONFIG"
-echo "[eval.sbatch] run=$RUN_NAME"
-echo "[eval.sbatch] checkpoint=${CHECKPOINT:-config/default}"
-echo "[eval.sbatch] data_root=$DATA_ROOT"
-echo "[eval.sbatch] val_fraction=${VAL_FRACTION:-config-default}"
-echo "[eval.sbatch] command: python eval.py ${ARGS[*]}"
+echo "[compare_eval_protocols.sbatch] repo=$REPO_DIR"
+echo "[compare_eval_protocols.sbatch] config=$CONFIG"
+echo "[compare_eval_protocols.sbatch] run=$RUN_NAME"
+echo "[compare_eval_protocols.sbatch] checkpoint=${CHECKPOINT:-config/default}"
+echo "[compare_eval_protocols.sbatch] data_root=$DATA_ROOT"
+echo "[compare_eval_protocols.sbatch] command: python compare_eval_protocols.py ${ARGS[*]}"
 
-python eval.py "${ARGS[@]}" 2>&1 | tee "$LOG_DIR/$RUN_NAME.log"
+python compare_eval_protocols.py "${ARGS[@]}" 2>&1 | tee "$LOG_DIR/$RUN_NAME.log"

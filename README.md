@@ -50,8 +50,35 @@ sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_zero_shot.yaml,RUN_NAME=
 The canonical metric is implemented locally from `docs/project_spec.md`:
 siRMSE is computed on ground-truth-valid pixels, where `0.001 <= gt <= 80`.
 DA2 upstream code is used for model loading/inference preprocessing, but not for
-the project metric. DA2 relative outputs are treated directly as positive
-relative depth, not inverted as disparity.
+the project metric. DA2 relative outputs are treated as inverse depth/disparity
+and converted to CIL depth direction with `1 / raw` before siRMSE.
+
+## Shared Splits
+
+Canonical train/validation split files live in `configs/splits/` and should be
+committed so all team members compare on the same validation set. The current
+shared seed is `42`, with files for 5%, 10%, and 20% validation splits:
+
+```text
+configs/splits/cil_depth_val_05pct_seed42.json
+configs/splits/cil_depth_val_10pct_seed42.json
+configs/splits/cil_depth_val_20pct_seed42.json
+```
+
+`dataset.data_loader.split_names()` automatically uses the matching split file
+when `data.val_fraction` and `data.split_seed` match one of these files. A config
+can also pin a split explicitly with `data.split_file`, for example:
+
+```yaml
+data:
+  val_fraction: 0.05
+  split_seed: 42
+  split_file: configs/splits/cil_depth_val_05pct_seed42.json
+```
+
+For smoke tests with `data.max_samples`, the loader falls back to deterministic
+random splitting if the full-dataset split file is incompatible with the smaller
+sample list.
 
 ## Current structure
 

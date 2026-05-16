@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Any
-
 import numpy as np
 import torch
 
@@ -15,8 +12,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from models.da2 import build_da2, load_training_checkpoint
-from models.unet import UNetBaseline
+from models.loading import load_model_for_inference
 from utils import DEFAULT_CONFIG, apply_overrides, load_config, maybe_wandb, save_json, save_yaml, setup_logging, timestamp
 from utils.eval import evaluate_names, validation_names
 
@@ -34,37 +30,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-samples", type=int)
     p.add_argument("--fraction", type=float)
     p.add_argument("--save-images", type=int, default=0)
+    p.add_argument("--scale-depth-percentile", action="store_true")
+    p.add_argument("--scale-percentile", type=float, default=99.0)
+    p.add_argument("--scale-target", type=float, default=80.0)
+    p.add_argument("--scale-max-clip", type=float, default=60000.0)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-wandb", action="store_true")
     return p.parse_args()
 
-
-def build_model(cfg: dict[str, Any], checkpoint: str | None, device: torch.device) -> torch.nn.Module:
-    if checkpoint:
-        cfg.setdefault("paths", {})["checkpoint"] = os.path.expanduser(os.path.expandvars(checkpoint))
-    if str(cfg["model"]).startswith("da2_"):
-        model_name = cfg["model"]
-        ckpt = Path(cfg.get("paths", {}).get("checkpoint") or Path(cfg["paths"]["da2_checkpoint_dir"]) / f"depth_anything_v2_{model_name.removeprefix('da2_')}.pth")
-        payload = torch.load(ckpt, map_location="cpu")
-        if isinstance(payload, dict) and payload.get("format") == "trainable_only":
-            cfg.setdefault("paths", {})["checkpoint"] = payload["base_checkpoint"]
-            model, _ = build_da2(cfg)
-            load_training_checkpoint(model, ckpt)
-        elif isinstance(payload, dict) and payload.get("format") == "full_model":
-            cfg.setdefault("paths", {}).pop("checkpoint", None)
-            model, _ = build_da2(cfg)
-            load_training_checkpoint(model, ckpt)
-        else:
-            model, _ = build_da2(cfg)
-        return model.to(device).eval()
-    if cfg["model"] == "unet":
-        if not checkpoint:
-            raise ValueError("U-Net eval requires --checkpoint")
-        model = UNetBaseline()
-        payload = torch.load(checkpoint, map_location="cpu")
-        model.load_state_dict(payload.get("model", payload.get("state_dict", payload)) if isinstance(payload, dict) else payload)
-        return model.to(device).eval()
-    raise ValueError(f"Unknown model: {cfg['model']}")
 
 
 @torch.no_grad()
@@ -83,11 +56,15 @@ def main() -> None:
     print(f"config={args.config}")
     print(f"model={cfg.get('model')}")
     print(f"output_dir={out}")
+    scaling = None
+    if args.scale_depth_percentile:
+        scaling = {"mode": "percentile", "percentile": args.scale_percentile, "target": args.scale_target, "max_clip": args.scale_max_clip}
+        print(f"scaling={scaling}")
     if args.dry_run:
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(cfg, args.checkpoint, device)
+    model = load_model_for_inference(cfg, args.checkpoint, device)
     val_names = validation_names(cfg)
     if args.fraction:
         rng = np.random.default_rng(int(cfg["data"].get("split_seed", 42)))
@@ -97,9 +74,13 @@ def main() -> None:
         val_names = val_names[:args.max_samples]
 
     out.mkdir(parents=True, exist_ok=True)
-    result = evaluate_names(model, cfg, val_names, device, save_images=args.save_images, image_dir=out / "images")
+    result = evaluate_names(model, cfg, val_names, device, save_images=args.save_images, image_dir=out / "images", scaling=scaling)
     summary = result["summary"]
-    save_json(out / "eval_summary.json", {"summary": summary, "scores": result["scores"], "selected_sample_names": val_names, "evaluated_sample_names": result["evaluated_sample_names"], "config": cfg})
+    payload = {"summary": summary, "scores": result["scores"], "selected_sample_names": val_names, "evaluated_sample_names": result["evaluated_sample_names"], "config": cfg}
+    if scaling is not None:
+        payload["scaling"] = scaling
+        payload["scales"] = result["scales"]
+    save_json(out / "eval_summary.json", payload)
     save_yaml(out / "effective_config.yaml", cfg)
     (out / "eval_summary.txt").write_text("\n".join(f"{k}: {v}" for k, v in summary.items()) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))

@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from dataset.data_loader import IMAGENET_MEAN, IMAGENET_STD, rgb_names, split_names
+from utils.calibration import scale_depth_percentile
 from utils.loss import MAX_DEPTH, MIN_DEPTH, sirmse
 
 
@@ -64,12 +65,13 @@ def predict_depth_for_eval(model: torch.nn.Module, image_rgb: np.ndarray, gt_sha
 
 
 @torch.no_grad()
-def evaluate_names(model: torch.nn.Module, cfg: dict[str, Any], names: list[str], device: torch.device, save_images: int = 0, image_dir: str | Path | None = None) -> dict[str, Any]:
+def evaluate_names(model: torch.nn.Module, cfg: dict[str, Any], names: list[str], device: torch.device, save_images: int = 0, image_dir: str | Path | None = None, scaling: dict[str, float] | None = None) -> dict[str, Any]:
     model.eval()
     root = Path(cfg["data"]["root"])
     scores = []
     evaluated = []
     image_paths = []
+    scales = {}
 
     if save_images > 0:
         image_dir = Path(image_dir)
@@ -79,6 +81,15 @@ def evaluate_names(model: torch.nn.Module, cfg: dict[str, Any], names: list[str]
         image, gt = load_rgb_depth(root, name)
         gt_t = torch.from_numpy(gt).float().to(device)
         pred = predict_depth_for_eval(model, image, gt_t.shape, cfg, device)
+        if scaling is not None:
+            pred_np, scale, percentile_value, clipped = scale_depth_percentile(
+                pred.detach().cpu().numpy().astype(np.float32),
+                scaling["percentile"],
+                scaling["target"],
+                scaling["max_clip"],
+            )
+            pred = torch.from_numpy(pred_np).to(device=device, dtype=gt_t.dtype)
+            scales[name] = {"scale": scale, "source_percentile": percentile_value, "clipped_pixels": clipped}
         score = sirmse(pred, gt_t)
         scores.append(float(score.item()))
         evaluated.append(name)
@@ -102,17 +113,19 @@ def evaluate_names(model: torch.nn.Module, cfg: dict[str, Any], names: list[str]
             cv2.imwrite(str(path), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
             image_paths.append(path)
 
+    summary = {
+        "sirmse_mean": float(np.mean(scores)) if scores else float("nan"),
+        "sirmse_median": float(np.median(scores)) if scores else float("nan"),
+        "sirmse_std": float(np.std(scores)) if scores else float("nan"),
+        "samples_selected": len(names),
+        "samples_evaluated": len(scores),
+    }
     return {
-        "summary": {
-            "sirmse_mean": float(np.mean(scores)) if scores else float("nan"),
-            "sirmse_median": float(np.median(scores)) if scores else float("nan"),
-            "sirmse_std": float(np.std(scores)) if scores else float("nan"),
-            "samples_selected": len(names),
-            "samples_evaluated": len(scores),
-        },
+        "summary": summary,
         "scores": scores,
         "evaluated_sample_names": evaluated,
         "image_paths": image_paths,
+        "scales": scales,
     }
 
 

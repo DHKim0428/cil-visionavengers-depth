@@ -51,7 +51,10 @@ class CILDepthDataset(Dataset):
         valid_t = torch.from_numpy(np.ascontiguousarray(valid))[None].float()
 
         if self.augmentation is not None:
+            image_orig, depth_orig, valid_orig = image_t, depth_t, valid_t
             image_t, depth_t, valid_t = self.augmentation(image_t, depth_t, valid_t)
+            if int(valid_t.sum()) == 0 and int(valid_orig.sum()) > 0:
+                image_t, depth_t, valid_t = image_orig, depth_orig, valid_orig
         if normalize:
             image_t = (image_t - IMAGENET_MEAN) / IMAGENET_STD
 
@@ -103,11 +106,45 @@ def rgb_names(data_root: str | Path, max_samples: int | None = None) -> list[str
     return names
 
 
+def default_split_file(val_fraction: float, seed: int) -> Path | None:
+    percent = val_fraction * 100.0
+    rounded = int(round(percent))
+    if abs(percent - rounded) > 1e-6:
+        return None
+    return Path(__file__).resolve().parents[1] / "configs" / "splits" / f"cil_depth_val_{rounded:02d}pct_seed{seed}.json"
+
+
+def split_names_from_file(path: Path, names: list[str]) -> tuple[list[str], list[str]]:
+    with path.open("r", encoding="utf-8") as f:
+        split = json.load(f)
+    available = set(names)
+    if "train_names" in split and "val_names" in split:
+        train = list(split["train_names"])
+        val = list(split["val_names"])
+        if set(train).issubset(available) and set(val).issubset(available):
+            return train, val
+        raise ValueError(f"Split file {path} is not compatible with the selected dataset names")
+    if "val_indices" in split:
+        val_indices = sorted(int(i) for i in split["val_indices"])
+        if val_indices and val_indices[-1] >= len(names):
+            raise ValueError(f"Split file {path} expects at least {val_indices[-1] + 1} samples, got {len(names)}")
+        val_set = set(val_indices)
+        train = [name for i, name in enumerate(names) if i not in val_set]
+        val = [names[i] for i in val_indices]
+        return train, val
+    raise ValueError(f"Split file {path} must contain train_names/val_names or val_indices")
+
+
 def split_names(names: list[str], val_fraction: float, seed: int, split_file: str | Path | None = None) -> tuple[list[str], list[str]]:
-    if split_file and Path(split_file).exists():
-        with Path(split_file).open("r", encoding="utf-8") as f:
-            split = json.load(f)
-        return list(split["train_names"]), list(split["val_names"])
+    explicit_split = split_file is not None
+    candidate = Path(split_file) if split_file else default_split_file(val_fraction, seed)
+    if candidate and candidate.exists():
+        try:
+            return split_names_from_file(candidate, names)
+        except ValueError:
+            if explicit_split:
+                raise
+
     rng = np.random.default_rng(seed)
     indices = np.arange(len(names))
     rng.shuffle(indices)

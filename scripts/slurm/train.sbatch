@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=depth-train
 #SBATCH --account=cil_jobs
-#SBATCH --time=04:00:00
-#SBATCH --gpus 2080ti:1
+#SBATCH --time=12:00:00
+#SBATCH --gpus 5060ti:1
 #SBATCH --mem=24G
 #SBATCH --output=slurm-%x-%j.out
 

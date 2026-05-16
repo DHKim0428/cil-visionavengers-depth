@@ -44,6 +44,8 @@ related papers/
 debug/
 teacher_masks/
 splits/
+!configs/splits/
+!configs/splits/*.json
 /da3_geocalib_fov_*/
 /geocalib_fov_*/
 

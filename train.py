@@ -156,6 +156,18 @@ def main() -> None:
     LOGGER.info("Params      : total=%s trainable=%s frozen=%s trainable=%.2f%%", f"{counts['total']:,}", f"{counts['trainable']:,}", f"{counts['frozen']:,}", counts["trainable_pct"])
 
     train_cfg = cfg.get("train", {})
+    early_cfg = train_cfg.get("early_stopping", {}) or {}
+    early_stopping = {
+        "enabled": bool(early_cfg.get("enabled", False)),
+        "patience": max(1, int(early_cfg.get("patience", 3))),
+        "min_delta": max(0.0, float(early_cfg.get("min_delta", 0.0))),
+    }
+    if early_stopping["enabled"]:
+        LOGGER.info(
+            "Early stopping enabled: patience=%d min_delta=%g metric=val_siRMSE",
+            early_stopping["patience"],
+            early_stopping["min_delta"],
+        )
     params = [p for p in model.parameters() if p.requires_grad]
     if not params:
         raise RuntimeError("No trainable parameters selected")
@@ -171,6 +183,9 @@ def main() -> None:
     scheduler = train_cfg.get("scheduler", "constant")
     total_steps = max(1, math.ceil(len(train_loader) / grad_accum) * max(1, epochs - start_epoch + 1))
     history = []
+    epochs_without_improvement = 0
+    stopped_early = False
+    stop_epoch = None
     t0 = time.time()
     for epoch in range(start_epoch, epochs + 1):
         model.train()
@@ -212,14 +227,34 @@ def main() -> None:
         if wandb_run:
             wandb_run.log({"train/loss": train_loss, "val/sirmse": val, "epoch": epoch}, step=global_step)
 
-        if np.isfinite(val) and val < best:
+        improvement_margin = early_stopping["min_delta"] if early_stopping["enabled"] else 0.0
+        improved = np.isfinite(val) and val < best - improvement_margin
+        if improved:
             best = val
+            epochs_without_improvement = 0
             if cfg.get("checkpoint", {}).get("keep_best", True):
                 save_checkpoint(run_dir / "best.pth", cfg, model, optimizer, scaler, epoch, global_step, best, val, base_ckpt, include_optimizer=False)
+        elif early_stopping["enabled"]:
+            epochs_without_improvement += 1
+
         if cfg.get("checkpoint", {}).get("keep_latest", True):
             save_checkpoint(run_dir / "latest.pth", cfg, model, optimizer, scaler, epoch, global_step, best, val, base_ckpt, include_optimizer=bool(cfg.get("checkpoint", {}).get("save_optimizer", True)))
 
-    summary = {"best_sirmse": best, "history": history, "elapsed_seconds": time.time() - t0, "output_dir": str(run_dir)}
+        if early_stopping["enabled"] and epochs_without_improvement >= early_stopping["patience"]:
+            stopped_early = True
+            stop_epoch = epoch
+            LOGGER.info("Early stopping at epoch %d: best val_siRMSE=%.4f", epoch, best)
+            break
+
+    summary = {
+        "best_sirmse": best,
+        "history": history,
+        "stopped_early": stopped_early,
+        "stop_epoch": stop_epoch,
+        "early_stopping": early_stopping,
+        "elapsed_seconds": time.time() - t0,
+        "output_dir": str(run_dir),
+    }
     save_json(run_dir / "summary.json", summary)
     if wandb_run:
         wandb_run.summary.update(summary)

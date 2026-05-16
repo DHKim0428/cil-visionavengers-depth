@@ -1,4 +1,4 @@
-experiment: unet_baseline
+experiment: unet_basic_aug
 model: unet
 data:
   dataset: cil_depth
@@ -7,7 +7,7 @@ data:
   split_seed: 42
   split_file: configs/splits/cil_depth_val_05pct_seed42.json
   image_size: 128
-augmentation: none
+augmentation: basic
 train:
   epochs: 10
   batch_size: 8

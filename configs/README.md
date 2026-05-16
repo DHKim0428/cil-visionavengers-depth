@@ -20,10 +20,22 @@ Important sections:
 - `data`: dataset root, split, image size
 - `augmentation`: preset name such as `none` or `basic`
   DA2 training configs currently use `basic`; zero-shot eval configs keep `none`.
-- `train`: optimizer, epochs, batch size, AMP, workers
+- `train`: optimizer, epochs, batch size, AMP, workers, optional `early_stopping`
 - `logging`: W&B entity/project
 - `paths`: DA2 repo/checkpoints/output root
 - `checkpoint`: `trainable_only` or `full_model`
+
+Optional early stopping is configured under `train.early_stopping`:
+
+```yaml
+train:
+  early_stopping:
+    enabled: true
+    patience: 3
+    min_delta: 0.0
+```
+
+It monitors validation `sirmse_mean`; lower is better. If omitted, training runs for all configured epochs.
 
 The canonical metric is siRMSE.  Ground-truth-valid pixels are
 `0.001 <= depth <= 80.0`.
