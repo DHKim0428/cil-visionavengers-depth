@@ -43,7 +43,7 @@ mkdir -p "$OUTPUT_DIR" "$HF_HOME"
 cd "$REPO_DIR"
 
 ARGS=(
-    scripts/precompute_geocalib_fov.py
+    dataset/da3/precompute_geocalib_fov.py
     --data_root "$DATA_ROOT"
     --output_dir "$OUTPUT_DIR"
     --clip_min_deg "$CLIP_MIN_DEG"

@@ -34,7 +34,9 @@ datasets/
 outputs/
 results/
 checkpoints/
-models/
+*.pth
+*.pt
+*.ckpt
 artifacts/
 wandb/
 mlruns/
@@ -42,6 +44,8 @@ related papers/
 debug/
 teacher_masks/
 splits/
+/da3_geocalib_fov_*/
+/geocalib_fov_*/
 
 # Local secrets / config
 .env

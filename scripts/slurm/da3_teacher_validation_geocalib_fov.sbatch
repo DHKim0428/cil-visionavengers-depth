@@ -54,7 +54,7 @@ if [[ ! -f "$FOV_TABLE" ]]; then
     FOV_OUTPUT_DIR="$(dirname "$FOV_TABLE")"
     mkdir -p "$FOV_OUTPUT_DIR"
     GEOCALIB_ARGS=(
-        scripts/precompute_geocalib_fov.py
+        dataset/da3/precompute_geocalib_fov.py
         --data_root "$DATA_ROOT"
         --output_dir "$FOV_OUTPUT_DIR"
         --max_samples "$MAX_SAMPLES"
@@ -65,7 +65,7 @@ if [[ ! -f "$FOV_TABLE" ]]; then
     python "${GEOCALIB_ARGS[@]}" 2>&1 | tee "$FOV_OUTPUT_DIR/precompute_geocalib_fov.log"
 fi
 
-python scripts/debug_save_tilt_samples.py \
+python dataset/debug/debug_save_tilt_samples.py \
     --data_root "$DATA_ROOT" \
     --output_dir "$DEBUG_OUTPUT_DIR" \
     --num_samples "$MAX_SAMPLES" \
@@ -75,7 +75,7 @@ python scripts/debug_save_tilt_samples.py \
     2>&1 | tee "$DEBUG_OUTPUT_DIR/debug_save_tilt_samples.log"
 
 ARGS=(
-    scripts/da3_teacher_validate_tilt.py
+    dataset/da3/da3_teacher_validate_tilt.py
     --input_dir "$DEBUG_OUTPUT_DIR"
     --output_dir "$OUTPUT_DIR"
     --model_dir "$MODEL_DIR"

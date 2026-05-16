@@ -1,227 +1,246 @@
-import os
-import json
+#!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
+import json
+import logging
+import math
+import os
+import sys
+import time
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset
-from tqdm import tqdm  
+import torch.nn.functional as F
+from torch.optim import Adam, AdamW
+from tqdm import tqdm
 
-from dataset import SimpleDepthDataset
-from model import UNetBaseline
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def silog_loss(pred, target, mask, lambda_=0.5, eps=1e-6):
-    """Scale-Invariant Log RMSE (SILog) loss function"""
-    valid = mask > 0
-    if valid.sum() == 0:
-        return pred.sum() * 0.0
+from dataset.data_loader import build_cil_loaders
+from models.da2 import build_da2, parameter_counts, trainable_state
+from models.unet import UNetBaseline
+from utils.loss import EPS, MAX_DEPTH, MIN_DEPTH, sirmse
+from utils import DEFAULT_CONFIG, apply_overrides, load_config, make_run_dir, maybe_wandb, save_json, save_yaml, seed_everything, setup_logging
 
-    pred = pred[valid]
-    target = target[valid]
-    
-    pred = torch.clamp(pred, min=eps)
-    target = torch.clamp(target, min=eps)
-    
-    log_diff = torch.log(pred) - torch.log(target)
-    
-    mse = torch.mean(log_diff ** 2)
-    mean = torch.mean(log_diff)
-    
-    return mse - lambda_ * (mean ** 2)
+LOGGER = logging.getLogger("cil_depth")
 
-def make_or_load_split(dataset, val_split, split_seed, split_file=None):
-    """Create a reproducible train/val split, optionally pinned by filenames on disk."""
-    n_total = len(dataset)
-    n_val = int(val_split * n_total)
-    n_train = n_total - n_val
-    if n_train <= 0 or n_val <= 0:
-        raise ValueError(
-            f"Invalid split: n_total={n_total}, val_split={val_split} gives "
-            f"n_train={n_train}, n_val={n_val}"
-        )
 
-    rgb_names = [path.name for path in dataset.rgb_files]
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Train CIL depth models")
+    p.add_argument("--config", default=DEFAULT_CONFIG)
+    p.add_argument("--run-name")
+    p.add_argument("--data-root")
+    p.add_argument("--output-root")
+    p.add_argument("--checkpoint")
+    p.add_argument("--resume")
+    p.add_argument("--epochs", type=int)
+    p.add_argument("--batch-size", type=int)
+    p.add_argument("--img-size", type=int)
+    p.add_argument("--num-workers", type=int)
+    p.add_argument("--max-samples", type=int)
+    p.add_argument("--scheduler", choices=["constant", "poly_decay"])
+    p.add_argument("--save-policy", choices=["trainable_only", "full_model"])
+    p.add_argument("--dry-run", action="store_true")
+    return p.parse_args()
 
-    if split_file is not None:
-        split_path = Path(split_file)
-        if split_path.exists():
-            with open(split_path, "r", encoding="utf-8") as f:
-                split = json.load(f)
 
-            name_to_idx = {name: idx for idx, name in enumerate(rgb_names)}
-            missing = [
-                name
-                for name in split["train_names"] + split["val_names"]
-                if name not in name_to_idx
-            ]
-            if missing:
-                raise ValueError(
-                    f"Split file {split_path} references {len(missing)} missing samples. "
-                    f"First missing sample: {missing[0]}"
-                )
+def build_model(cfg: dict[str, Any]) -> tuple[torch.nn.Module, str, Path | None]:
+    family = cfg["model"]["family"]
+    if family == "da2_relative":
+        model, base_ckpt = build_da2(cfg)
+        return model, "disparity", base_ckpt
+    if family == "unet":
+        kind = cfg["model"].get("prediction_kind", "disparity")
+        if kind not in {"disparity", "depth"}:
+            raise ValueError("U-Net training supports prediction_kind: disparity or depth")
+        return UNetBaseline(prediction_kind=kind), kind, None
+    raise ValueError(f"Unknown model.family: {family}")
 
-            train_indices = [name_to_idx[name] for name in split["train_names"]]
-            val_indices = [name_to_idx[name] for name in split["val_names"]]
-            print(f"[*] Loaded split from {split_path}")
-            return train_indices, val_indices
 
-    generator = torch.Generator().manual_seed(split_seed)
-    indices = torch.randperm(n_total, generator=generator).tolist()
-    train_indices = indices[:n_train]
-    val_indices = indices[n_train:]
+def pred_to_depth(pred: torch.Tensor, kind: str) -> torch.Tensor:
+    if pred.ndim == 4 and pred.shape[1] == 1:
+        pred = pred[:, 0]
+    if kind == "disparity":
+        pred = torch.nan_to_num(pred, nan=EPS, posinf=1.0 / MIN_DEPTH, neginf=EPS).clamp_min(EPS)
+        return (1.0 / pred).clamp(MIN_DEPTH, MAX_DEPTH)
+    return torch.nan_to_num(pred, nan=MIN_DEPTH, posinf=MAX_DEPTH, neginf=MIN_DEPTH).clamp(MIN_DEPTH, MAX_DEPTH)
 
-    if split_file is not None:
-        split_path = Path(split_file)
-        split_path.parent.mkdir(parents=True, exist_ok=True)
-        split = {
-            "split_seed": split_seed,
-            "val_split": val_split,
-            "n_total": n_total,
-            "train_names": [rgb_names[idx] for idx in train_indices],
-            "val_names": [rgb_names[idx] for idx in val_indices],
-        }
-        with open(split_path, "w", encoding="utf-8") as f:
-            json.dump(split, f, indent=2)
-        print(f"[*] Saved split to {split_path}")
 
-    return train_indices, val_indices
+def forward_on_depth_grid(model: torch.nn.Module, image: torch.Tensor, depth: torch.Tensor) -> torch.Tensor:
+    pred = model(image)
+    if pred.ndim == 4 and pred.shape[1] == 1:
+        pred = pred[:, 0]
+    if pred.shape[-2:] != depth.shape[-2:]:
+        pred = F.interpolate(pred[:, None], size=depth.shape[-2:], mode="bilinear", align_corners=False)[:, 0]
+    return pred
 
-def main(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[*] Using device: {device}")
 
-    # Dataset & DataLoader
-    print(f"[*] Loading dataset from {args.data_root}...")
-    train_base = SimpleDepthDataset(
-        args.data_root,
-        img_size=args.img_size,
-        max_samples=args.max_samples,
-        enable_hflip=args.enable_hflip,
-        hflip_prob=args.hflip_prob,
-        enable_rotation=args.enable_rotation,
-        rotation_deg=args.rotation_deg,
-        enable_crop=args.enable_crop,
-        crop_scale_min=args.crop_scale_min,
-        enable_color_jitter=args.enable_color_jitter,
-        color_jitter_prob=args.color_jitter_prob,
-        brightness=args.brightness,
-        contrast=args.contrast,
-        saturation=args.saturation,
-        tilt_mode=args.tilt_mode,
-        tilt_prob=args.tilt_prob,
-        tilt_max_yaw_deg=args.tilt_max_yaw_deg,
-        tilt_max_pitch_deg=args.tilt_max_pitch_deg,
-        tilt_fov_deg=args.tilt_fov_deg,
-        teacher_mask_dir=args.teacher_mask_dir,
-    )
-    val_base = SimpleDepthDataset(
-        args.data_root,
-        img_size=args.img_size,
-        max_samples=args.max_samples,
-        tilt_mode="none",
-    )
+def batch_sirmse_loss(pred: torch.Tensor, depth: torch.Tensor, valid: torch.Tensor, kind: str) -> torch.Tensor:
+    pred_depth = pred_to_depth(pred, kind)
+    losses = []
+    for i in range(depth.shape[0]):
+        score = sirmse(pred_depth[i], depth[i], valid[i])
+        if score is not None:
+            losses.append(score)
+    return torch.stack(losses).mean() if losses else pred_depth.sum() * 0.0
 
-    train_indices, val_indices = make_or_load_split(
-        train_base,
-        val_split=args.val_split,
-        split_seed=args.split_seed,
-        split_file=args.split_file,
-    )
-    train_dataset = Subset(train_base, train_indices)
-    val_dataset = Subset(val_base, val_indices)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+@torch.no_grad()
+def evaluate(model: torch.nn.Module, loader, device: torch.device, kind: str) -> float:
+    model.eval()
+    scores = []
+    for batch in tqdm(loader, desc="val", leave=False):
+        image = batch["image"].to(device)
+        depth = batch["depth"].to(device)
+        valid = batch["valid_mask"].to(device)
+        pred_depth = pred_to_depth(forward_on_depth_grid(model, image, depth), kind)
+        for i in range(depth.shape[0]):
+            score = sirmse(pred_depth[i], depth[i], valid[i])
+            if score is not None:
+                scores.append(float(score.item()))
+    return float(np.mean(scores)) if scores else float("nan")
 
-    print(f"[*] Train samples: {len(train_dataset)} | Val samples: {len(val_dataset)}")
-    print(
-        "[*] Basic augmentation: "
-        f"hflip={args.enable_hflip}, rotation={args.enable_rotation}, "
-        f"crop={args.enable_crop}, color_jitter={args.enable_color_jitter}"
-    )
-    print(f"[*] Tilt augmentation: mode={args.tilt_mode}, prob={args.tilt_prob}")
-    if args.teacher_mask_dir:
-        print(f"[*] Teacher reliability masks: enabled for training only ({args.teacher_mask_dir})")
+
+def save_checkpoint(path: Path, cfg: dict[str, Any], model: torch.nn.Module, optimizer, scaler, epoch: int, global_step: int, best: float, val: float, base_ckpt: Path | None, include_optimizer: bool) -> None:
+    policy = cfg.get("checkpoint", {}).get("save_policy", "trainable_only")
+    if policy == "trainable_only" and cfg["model"]["family"] == "da2_relative":
+        payload = {"format": "trainable_only", "trainable": trainable_state(model), "base_checkpoint": str(base_ckpt)}
     else:
-        print("[*] Teacher reliability masks: disabled")
+        payload = {"format": "full_model", "model": {k: v.detach().cpu() for k, v in model.state_dict().items()}}
+    payload.update({"config": cfg, "epoch": epoch, "global_step": global_step, "best_sirmse": best, "val_sirmse": val})
+    if include_optimizer:
+        payload["optimizer"] = optimizer.state_dict()
+        payload["scaler"] = scaler.state_dict()
+    torch.save(payload, path)
 
-    # Model & Optimizer
-    model = UNetBaseline().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    os.makedirs(args.save_dir, exist_ok=True)
+def restore_if_requested(cfg: dict[str, Any], model: torch.nn.Module, optimizer, scaler) -> tuple[int, int, float]:
+    resume = cfg.get("train", {}).get("resume")
+    if not resume:
+        return 1, 0, float("inf")
+    payload = torch.load(resume, map_location="cpu")
+    if payload.get("format") == "trainable_only":
+        state = model.state_dict()
+        state.update(payload.get("trainable", {}))
+        model.load_state_dict(state, strict=True)
+    elif "model" in payload:
+        model.load_state_dict(payload["model"], strict=True)
+    else:
+        model.load_state_dict(payload, strict=True)
+    if "optimizer" in payload:
+        optimizer.load_state_dict(payload["optimizer"])
+    if "scaler" in payload:
+        scaler.load_state_dict(payload["scaler"])
+    return int(payload.get("epoch", 0)) + 1, int(payload.get("global_step", 0)), float(payload.get("best_sirmse", float("inf")))
 
-    def run_epoch(loader, epoch_idx, is_train=True):
-        model.train() if is_train else model.eval()
-        total_loss = 0.0
-        
-        mode_str = "Train" if is_train else "Val"
-        pbar = tqdm(loader, desc=f"Epoch [{epoch_idx}/{args.num_epochs}] {mode_str}")
-        
-        for batch in pbar:
-            images = batch["image"].to(device)
-            depths = batch["depth"].to(device)
-            masks = batch["mask"].to(device)
-            
-            with torch.set_grad_enabled(is_train):
-                preds = model(images)
-                loss = silog_loss(preds, depths, masks)
-                
-                if is_train:
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-            
-            total_loss += loss.item()
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-            
-        return total_loss / len(loader)
 
-    # Training Loop
-    for epoch in range(1, args.num_epochs + 1):
-        train_loss = run_epoch(train_loader, epoch, is_train=True)
-        val_loss = run_epoch(val_loader, epoch, is_train=False)
-        
-        print(f">>> Epoch [{epoch}/{args.num_epochs}] Summary | Train SILog: {train_loss:.4f} | Val SILog: {val_loss:.4f}\n")
-        
-        # Save model checkpoint
-        checkpoint_path = os.path.join(args.save_dir, f"unet_epoch_{epoch}.pth")
-        torch.save(model.state_dict(), checkpoint_path)
+def main() -> None:
+    args = parse_args()
+    setup_logging()
+    cfg = apply_overrides(load_config(args.config), {
+        "experiment.name": args.run_name,
+        "data.root": args.data_root,
+        "paths.output_root": args.output_root,
+        "paths.checkpoint": os.path.expanduser(os.path.expandvars(args.checkpoint)) if args.checkpoint else None,
+        "train.resume": os.path.expanduser(os.path.expandvars(args.resume)) if args.resume else None,
+        "train.epochs": args.epochs,
+        "train.batch_size": args.batch_size,
+        "train.num_workers": args.num_workers,
+        "train.scheduler": args.scheduler,
+        "data.image_size": args.img_size,
+        "data.max_samples": args.max_samples,
+        "checkpoint.save_policy": args.save_policy,
+    })
 
-    print("[*] Training Complete!")
+    LOGGER.info("Config      : %s", args.config)
+    LOGGER.info("Experiment  : %s", cfg.get("experiment", {}).get("name"))
+    LOGGER.info("Model       : %s", cfg.get("model"))
+    LOGGER.info("Data root   : %s", cfg.get("data", {}).get("root"))
+    LOGGER.info("Augmentation: %s", cfg.get("augmentation", {}).get("name", "none"))
+    if args.dry_run:
+        return
+
+    seed_everything(int(cfg.get("data", {}).get("split_seed", 42)))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    run_dir = make_run_dir(cfg)
+    save_yaml(run_dir / "effective_config.yaml", cfg)
+    wandb_run = maybe_wandb(cfg, run_dir, job_type="train")
+
+    train_loader, val_loader, train_names, val_names = build_cil_loaders(cfg)
+    model, kind, base_ckpt = build_model(cfg)
+    model.to(device)
+    counts = parameter_counts(model) if cfg["model"]["family"] == "da2_relative" else {"total": sum(p.numel() for p in model.parameters()), "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad)}
+    counts.setdefault("frozen", counts["total"] - counts["trainable"])
+    counts.setdefault("trainable_pct", 100.0 * counts["trainable"] / counts["total"] if counts["total"] else 0.0)
+    LOGGER.info("Output dir  : %s", run_dir)
+    LOGGER.info("Samples     : train=%d val=%d", len(train_names), len(val_names))
+    LOGGER.info("Params      : total=%s trainable=%s frozen=%s trainable=%.2f%%", f"{counts['total']:,}", f"{counts['trainable']:,}", f"{counts['frozen']:,}", counts["trainable_pct"])
+
+    train_cfg = cfg.get("train", {})
+    params = [p for p in model.parameters() if p.requires_grad]
+    if not params:
+        raise RuntimeError("No trainable parameters selected")
+    lr, wd = float(train_cfg.get("learning_rate", 1e-4)), float(train_cfg.get("weight_decay", 0.0))
+    optimizer = AdamW(params, lr=lr, weight_decay=wd) if train_cfg.get("optimizer", "adamw").lower() == "adamw" else Adam(params, lr=lr, weight_decay=wd)
+    amp = bool(train_cfg.get("amp", False)) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=amp)
+    start_epoch, global_step, best = restore_if_requested(cfg, model, optimizer, scaler)
+
+    epochs = int(train_cfg.get("epochs", 10))
+    grad_accum = max(1, int(train_cfg.get("grad_accum_steps", 1)))
+    scheduler = train_cfg.get("scheduler", "constant")
+    total_steps = max(1, math.ceil(len(train_loader) / grad_accum) * max(1, epochs - start_epoch + 1))
+    history = []
+    t0 = time.time()
+    for epoch in range(start_epoch, epochs + 1):
+        model.train()
+        losses = []
+        optimizer.zero_grad(set_to_none=True)
+        for step, batch in enumerate(tqdm(train_loader, desc=f"epoch {epoch}/{epochs}"), start=1):
+            image = batch["image"].to(device)
+            depth = batch["depth"].to(device)
+            valid = batch["valid_mask"].to(device)
+            with torch.cuda.amp.autocast(enabled=amp):
+                loss = batch_sirmse_loss(forward_on_depth_grid(model, image, depth), depth, valid, kind) / grad_accum
+            scaler.scale(loss).backward()
+            if step % grad_accum == 0 or step == len(train_loader):
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                global_step += 1
+                if scheduler == "poly_decay":
+                    progress = min(global_step / total_steps, 1.0)
+                    for group in optimizer.param_groups:
+                        group["lr"] = lr * (1.0 - progress) ** 0.9
+                elif scheduler != "constant":
+                    raise ValueError(f"Unknown scheduler: {scheduler}")
+            losses.append(float(loss.item() * grad_accum))
+
+        val = evaluate(model, val_loader, device, kind)
+        train_loss = float(np.mean(losses)) if losses else float("nan")
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_sirmse": val})
+        LOGGER.info("Epoch %d/%d train_loss=%.4f val_siRMSE=%.4f", epoch, epochs, train_loss, val)
+        if wandb_run:
+            wandb_run.log({"train/loss": train_loss, "val/sirmse": val, "epoch": epoch}, step=global_step)
+
+        if np.isfinite(val) and val < best:
+            best = val
+            if cfg.get("checkpoint", {}).get("keep_best", True):
+                save_checkpoint(run_dir / "best.pth", cfg, model, optimizer, scaler, epoch, global_step, best, val, base_ckpt, include_optimizer=False)
+        if cfg.get("checkpoint", {}).get("keep_latest", True):
+            save_checkpoint(run_dir / "latest.pth", cfg, model, optimizer, scaler, epoch, global_step, best, val, base_ckpt, include_optimizer=bool(cfg.get("checkpoint", {}).get("save_optimizer", True)))
+
+    summary = {"best_sirmse": best, "history": history, "elapsed_seconds": time.time() - t0, "output_dir": str(run_dir)}
+    save_json(run_dir / "summary.json", summary)
+    if wandb_run:
+        wandb_run.summary.update(summary)
+        wandb_run.finish()
+
 
 if __name__ == "__main__":
-    user_name = os.environ.get("USER", "student")
-    scratch_save_dir = f"/work/scratch/{user_name}/cil-visionavengers-depth/checkpoints"
-
-    parser = argparse.ArgumentParser(description="Monocular Depth Estimation Baseline")
-    parser.add_argument("--data_root", type=str, default="/cluster/courses/cil/monocular-depth-estimation/train", help="Dataset path")
-    parser.add_argument("--save_dir", type=str, default=scratch_save_dir, help="Where to save models")
-    parser.add_argument("--img_size", type=int, default=128, help="Image resolution for training")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
-    parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--val_split", type=float, default=0.20, help="Ratio of validation data (e.g., 0.20 for 20%)")
-    parser.add_argument("--split_seed", type=int, default=42, help="Random seed for deterministic train/val split")
-    parser.add_argument("--split_file", type=str, default=None, help="Optional JSON file to save/load train/val filenames")
-    parser.add_argument("--max_samples", type=int, default=None, help="Optional cap for quick debugging runs")
-    parser.add_argument("--enable_hflip", action="store_true", help="Enable horizontal flip augmentation on the training split")
-    parser.add_argument("--hflip_prob", type=float, default=0.5, help="Probability of applying horizontal flip")
-    parser.add_argument("--enable_rotation", action="store_true", help="Enable small in-plane rotations on the training split")
-    parser.add_argument("--rotation_deg", type=float, default=3.0, help="Maximum absolute rotation angle in degrees")
-    parser.add_argument("--enable_crop", action="store_true", help="Enable random square crop-and-resize augmentation on the training split")
-    parser.add_argument("--crop_scale_min", type=float, default=0.9, help="Minimum retained area scale for random square crop")
-    parser.add_argument("--enable_color_jitter", action="store_true", help="Enable mild RGB-only color jitter on the training split")
-    parser.add_argument("--color_jitter_prob", type=float, default=0.8, help="Probability of applying color jitter")
-    parser.add_argument("--brightness", type=float, default=0.1, help="Brightness jitter strength")
-    parser.add_argument("--contrast", type=float, default=0.1, help="Contrast jitter strength")
-    parser.add_argument("--saturation", type=float, default=0.1, help="Saturation jitter strength")
-    parser.add_argument("--tilt_mode", type=str, default="none", choices=["none", "naive", "geometry"], help="Tilt augmentation type for training only")
-    parser.add_argument("--tilt_prob", type=float, default=0.5, help="Probability of applying tilt augmentation to a training sample")
-    parser.add_argument("--tilt_max_yaw_deg", type=float, default=5.0, help="Maximum absolute yaw angle in degrees")
-    parser.add_argument("--tilt_max_pitch_deg", type=float, default=5.0, help="Maximum absolute pitch angle in degrees")
-    parser.add_argument("--tilt_fov_deg", type=float, default=60.0, help="Assumed horizontal field of view for approximate intrinsics")
-    parser.add_argument("--teacher_mask_dir", type=str, default=None, help="Optional training-only DA3 reliability mask directory")
-    
-    args = parser.parse_args()
-    main(args)
+    main()

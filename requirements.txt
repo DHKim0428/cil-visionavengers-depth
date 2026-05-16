@@ -1,0 +1,10 @@
+# Extra project dependencies layered on top of the course-provided CIL Conda environment.
+# PyTorch and torchvision are intentionally provided by the course environment.
+numpy
+opencv-python
+Pillow
+matplotlib
+tqdm
+tensorboard
+wandb
+PyYAML

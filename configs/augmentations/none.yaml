@@ -1,0 +1,13 @@
+name: none
+paired_spatial:
+  hflip:
+    enabled: false
+  rotation:
+    enabled: false
+  crop:
+    enabled: false
+  tilt:
+    mode: none
+rgb_only:
+  color_jitter:
+    enabled: false

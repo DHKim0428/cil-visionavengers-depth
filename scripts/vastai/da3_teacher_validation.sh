@@ -17,7 +17,7 @@ mkdir -p "$OUTPUT_DIR" "$HF_HOME"
 cd "$REPO_DIR"
 
 ARGS=(
-    scripts/da3_teacher_validate_tilt.py
+    dataset/da3/da3_teacher_validate_tilt.py
     --input_dir "$INPUT_DIR"
     --output_dir "$OUTPUT_DIR"
     --model_dir "$MODEL_DIR"

@@ -1,102 +1,67 @@
 # cil-visionavengers-depth
 
-This is the **VisionAvengers** team project repository for the ETH Computational Intelligence Lab **Monocular Depth Estimation** project. It contains our code, experiments, and report material.
+VisionAvengers CIL monocular depth-estimation repository.
 
-## Index
-- [Getting started](#getting-started)
-- [Documentation](#documentation)
-- [Baseline Model: UNetBaseline](#baseline-model-unetbaseline)
+## Clone
 
-## Getting started
-After logging in to the student cluster, create a workspace directory under your home directory and clone this repository:
+For a fresh checkout, clone with the DA2 submodule:
 
 ```bash
-cd ~
-mkdir -p workspace
-cd workspace
-git clone https://github.com/DHKim0428/cil-visionavengers-depth.git
+git clone --recurse-submodules https://github.com/DHKim0428/cil-visionavengers-depth.git
 cd cil-visionavengers-depth
 ```
 
-Here, `~` refers to the current user's home directory, for example `/home/$USER`.
-
-## Documentation
-- [Official project specification](docs/project_spec.md)
-- [Cluster setup](docs/cluster_setup.md) — general cluster usage, workspace layout, SLURM usage, GPU sessions
-- [Environment setup](docs/environment_setup.md) — Conda initialization, environment activation, and troubleshooting conflicts
-- [Dataset setup](docs/dataset_setup.md)
-- [ETH student cluster documentation](https://www.isg.inf.ethz.ch/Main/HelpClusterComputingStudentCluster)
-- [ETH student cluster job documentation](https://www.isg.inf.ethz.ch/Main/HelpClusterComputingStudentClusterRunningJobs)
-
-## Baseline Model: UNetBaseline
-
-We have implemented a standard **U-Net** architecture with **Batch Normalization** to serve as a robust baseline for this project. This model is significantly more capable than the initial `TinyUNet` provided in the demo, offering better convergence and higher capacity.
-
-### Key Features
-- **Architecture**: Standard U-Net with 4 encoder/decoder levels.
-- **Capacity**: Channels scale from 32 up to 256 in the bottleneck.
-- **Stability**: Integrated Batch Normalization after each convolution layer.
-- **Loss Function**: Scale-Invariant Log RMSE (SILog).
-
-### Performance (Default Settings)
-Below are the results achieved using the default parameters provided in `train.py`:
-
-| Parameter | Value |
-| :--- | :--- |
-| Image Size | 128 x 128 |
-| Batch Size | 8 |
-| Learning Rate | 1e-3 |
-| Max Epochs | 10 |
-| Val Split | 20% |
-
-**Results:**
-- **Best Validation SILog Loss**: `0.6709` *(Achieved at the final epoch (Epoch 10), indicating that the model has not yet fully converged and training for more epochs will likely improve performance further.)*
-- **Training Time**: Approx. 35 mins on RTX 5060 Ti.
-
----
-
-## SLURM training scripts
-
-Cluster jobs live in `scripts/slurm/`. They keep the U-Net baseline batch size
-(`--batch_size 8`) and write checkpoints/logs/splits under:
+If you already cloned without submodules, run:
 
 ```bash
-/work/scratch/$USER/cil-visionavengers-depth
+git submodule update --init --recursive
 ```
 
-Quick smoke test for the tilt data pipeline:
+## Setup
 
 ```bash
-sbatch scripts/slurm/smoke_unet_tilt.sbatch
+module load cuda/12.6.0
+conda_cil
+python -m pip install -r requirements.txt
+wandb login
+bash scripts/setup_da2.sh
 ```
 
-Full baseline run:
+If `conda_cil` is not available, see `docs/environment_setup.md`.
+
+## Main commands
+
+Python entrypoints live at the repository root:
 
 ```bash
-sbatch scripts/slurm/train_unet_baseline.sbatch
+python train.py --config configs/experiments/da2_vits_refinenets_output.yaml
+python eval.py --config configs/experiments/da2_vits_zero_shot.yaml
 ```
 
-Full run with only standard augmentations enabled:
+SLURM wrappers live under `scripts/slurm/`:
 
 ```bash
-sbatch scripts/slurm/train_unet_basic_aug.sbatch
+sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_refinenets_output.yaml,RUN_NAME=da2_refinenets scripts/slurm/train.sbatch
+sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_zero_shot.yaml,RUN_NAME=da2_eval scripts/slurm/eval.sbatch
 ```
 
-Full geometry-consistent tilt run, using the same train/val split as baseline:
+## Current structure
 
-```bash
-sbatch scripts/slurm/train_unet_tilt_geometry.sbatch
+```text
+train.py                 # canonical training entrypoint
+eval.py                  # canonical siRMSE evaluation entrypoint
+configs/                 # experiment and augmentation YAMLs
+dataset/                 # data_loader.py, data_augment.py, and dataset preprocessing utilities
+models/                  # DA2 and U-Net model helpers
+utils/                   # config/wandb helpers and siRMSE
+scripts/                 # shell and SLURM wrappers only
+legacy/                  # old or superseded code kept for reference
 ```
 
-Weaker geometry tilt preset (`prob=0.25`, `yaw/pitch=3 deg`):
+## Docs
 
-```bash
-sbatch scripts/slurm/train_unet_tilt_geometry_weak.sbatch
-```
-
-Useful overrides:
-
-```bash
-sbatch --export=ALL,NUM_EPOCHS=3 scripts/slurm/train_unet_baseline.sbatch
-sbatch --export=ALL,TILT_PROB=0.75,TILT_MAX_YAW_DEG=8,TILT_MAX_PITCH_DEG=8 scripts/slurm/train_unet_tilt_geometry.sbatch
-```
+- `docs/project_spec.md`
+- `docs/environment_setup.md`
+- `docs/cluster_setup.md`
+- `docs/dataset_setup.md`
+- `docs/da2_setup.md`

@@ -1,0 +1,68 @@
+experiment:
+  name: da2_vits_refinenets_output_lora
+  tags:
+  - da2
+  - vits
+  - refinenets_output
+  - lora
+model:
+  family: da2_relative
+  encoder: vits
+base:
+  trainable_scope: refinenets_output
+data:
+  dataset: cil_depth
+  root: /cluster/courses/cil/monocular-depth-estimation/train
+  eval_protocol: native_resolution
+  val_fraction: 0.05
+  split_seed: 42
+  image_size: 518
+  views:
+    train:
+      resize_policy: dpt_lower_bound
+      output_grid: model_input
+      crop_size: image_size
+      normalize: imagenet
+    eval:
+      resize_policy: dpt_lower_bound
+      output_grid: native_gt
+      crop_size: null
+      normalize: imagenet
+augmentation:
+  preset: none
+supervision:
+  teacher_mask:
+    enabled: false
+train:
+  epochs: 10
+  batch_size: 8
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  optimizer: adamw
+  scheduler: poly_decay
+  amp: false
+  grad_accum_steps: 1
+  num_workers: 4
+logging:
+  backend: wandb
+  entity: cil-visionavengers
+  project: cil-visionavengers-depth
+  log_images_every: 1
+  num_log_images: 4
+paths:
+  da2_repo: external/Depth-Anything-V2
+  da2_checkpoint_dir: /work/scratch/$USER/cil-visionavengers-depth/models/da2
+  output_root: /work/scratch/$USER/cil-visionavengers-depth/checkpoints
+adapter:
+  enabled: true
+  type: lora
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target:
+    mode: trainable_scope
+checkpoint:
+  save_policy: trainable_only
+  keep_latest: true
+  keep_best: true
+  save_optimizer: true

@@ -1,0 +1,56 @@
+experiment:
+  name: unet_metric_depth
+  tags:
+  - unet
+  - metric_depth
+model:
+  family: unet
+  architecture: UNetBaseline
+  prediction_kind: depth
+data:
+  dataset: cil_depth
+  root: /cluster/courses/cil/monocular-depth-estimation/train
+  eval_protocol: native_resolution
+  val_fraction: 0.05
+  split_seed: 42
+  split_file: /work/scratch/$USER/cil-visionavengers-depth/splits/canonical_val_5pct_seed42.json
+  image_size: 128
+  views:
+    train:
+      resize_policy: square
+      output_grid: model_input
+      crop_size: null
+      normalize: none
+    eval:
+      resize_policy: square
+      output_grid: native_gt
+      crop_size: null
+      normalize: none
+augmentation:
+  preset: none
+supervision:
+  teacher_mask:
+    enabled: false
+train:
+  epochs: 10
+  batch_size: 8
+  learning_rate: 0.001
+  weight_decay: 0.0
+  optimizer: adam
+  scheduler: constant
+  amp: false
+  grad_accum_steps: 1
+  num_workers: 4
+logging:
+  backend: wandb
+  entity: cil-visionavengers
+  project: cil-visionavengers-depth
+  log_images_every: 1
+  num_log_images: 4
+paths:
+  output_root: /work/scratch/$USER/cil-visionavengers-depth/checkpoints
+checkpoint:
+  save_policy: full_model
+  keep_latest: true
+  keep_best: true
+  save_optimizer: true

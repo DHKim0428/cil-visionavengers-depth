@@ -10,7 +10,7 @@ mkdir -p "$REPO_DIR"
 cd "$REPO_DIR"
 
 ARGS=(
-    scripts/debug_save_tilt_samples.py
+    dataset/debug/debug_save_tilt_samples.py
     --data_root "$DATA_ROOT"
     --output_dir "$OUTPUT_DIR"
     --save_naive

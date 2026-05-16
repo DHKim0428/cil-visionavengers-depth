@@ -1,3 +1,0 @@
-Samples evaluated : 2260
-
-siRMSE : mean=0.6158  median=0.5468  std=0.2887
