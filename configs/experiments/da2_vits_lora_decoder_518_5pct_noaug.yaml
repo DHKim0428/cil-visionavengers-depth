@@ -1,6 +1,18 @@
-experiment: da2_vits_full_518_5pct
+experiment: da2_vits_lora_decoder_518_5pct_noaug
 model: da2_vits
-trainable: full
+trainable: frozen
+
+adapter:
+  enabled: true
+  type: lora
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_prefixes:
+    - depth_head
+  target_module_types:
+    - conv2d
+
 data:
   dataset: cil_depth
   root: /cluster/courses/cil/monocular-depth-estimation/train
@@ -8,31 +20,36 @@ data:
   split_seed: 42
   split_file: configs/splits/cil_depth_val_05pct_seed42.json
   image_size: 518
+
 augmentation: none
+
 train:
   epochs: 20
   early_stopping:
     enabled: true
-    patience: 3
+    patience: 5
     min_delta: 0.0
   batch_size: 8
-  learning_rate: 2.0e-06
+  learning_rate: 5e-5
   weight_decay: 0.0001
   optimizer: adamw
   scheduler: constant
   amp: true
   grad_accum_steps: 2
   num_workers: 3
+
 logging:
   backend: wandb
   entity: cil-visionavengers
   project: cil-visionavengers-depth
   log_images_every: 1
   num_log_images: 4
+
 paths:
   da2_repo: external/Depth-Anything-V2
   da2_checkpoint_dir: /work/scratch/$USER/cil-visionavengers-depth/models/da2
   output_root: /work/scratch/$USER/cil-visionavengers-depth/checkpoints
+
 checkpoint:
   save_policy: trainable_only
   keep_latest: true

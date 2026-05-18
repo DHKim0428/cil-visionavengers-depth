@@ -74,7 +74,19 @@ def add_lora(model: nn.Module, cfg: dict[str, Any]) -> nn.Module:
     target_modules = cfg.get("target_modules")
     if not target_modules:
         prefixes = cfg.get("target_prefixes") or []
-        target_modules = [name for name, module in model.named_modules() if isinstance(module, nn.Linear) and any(name.startswith(prefix) for prefix in prefixes)]
+        module_types = set(cfg.get("target_module_types") or ["linear"])
+        allowed_types = []
+        if "linear" in module_types:
+            allowed_types.append(nn.Linear)
+        if "conv2d" in module_types:
+            allowed_types.append(nn.Conv2d)
+        if not allowed_types:
+            raise ValueError(f"Unsupported LoRA target_module_types: {sorted(module_types)}")
+        target_modules = [
+            name
+            for name, module in model.named_modules()
+            if isinstance(module, tuple(allowed_types)) and any(name.startswith(prefix) for prefix in prefixes)
+        ]
     if not target_modules:
         raise ValueError("LoRA adapter needs `target_modules` or non-empty `target_prefixes`.")
 
