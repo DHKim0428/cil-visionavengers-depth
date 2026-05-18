@@ -1,4 +1,4 @@
-experiment: da2_vits_decoder_518_5pct_noaug_5e-5
+experiment: da2_vits_decoder_518_5pct_noaug_lr1e-4
 model: da2_vits
 trainable: decoder
 
@@ -13,13 +13,13 @@ data:
 augmentation: none
 
 train:
-  epochs: 20
+  epochs: 30
   early_stopping:
     enabled: true
     patience: 5
     min_delta: 0.0
   batch_size: 8
-  learning_rate: 2.0e-06
+  learning_rate: 1.0e-4
   weight_decay: 0.0001
   optimizer: adamw
   scheduler: constant

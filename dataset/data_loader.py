@@ -16,18 +16,21 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 class CILDepthDataset(Dataset):
-    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None) -> None:
+    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None, cutmix: dict[str, Any] | None = None) -> None:
         self.root = Path(data_root)
         self.names = names
         self.model = model
         self.image_size = int(image_size)
         self.training = training
         self.augmentation = augmentation
+        cutmix = cutmix or {}
+        self.cutmix_prob = float(cutmix.get("prob", 0.0)) if cutmix.get("enabled", False) and training else 0.0
+        self.cutmix_alpha = float(cutmix.get("alpha", 1.0))
 
     def __len__(self) -> int:
         return len(self.names)
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor | str]:
+    def _load_sample(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, bool]:
         name = self.names[idx]
         bgr = cv2.imread(str(self.root / name))
         if bgr is None:
@@ -49,16 +52,70 @@ class CILDepthDataset(Dataset):
         image_t = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1))).float()
         depth_t = torch.from_numpy(np.ascontiguousarray(depth))[None].float()
         valid_t = torch.from_numpy(np.ascontiguousarray(valid))[None].float()
+        return image_t, depth_t, valid_t, name, normalize
 
+    def _cutmix(self, image_a: torch.Tensor, depth_a: torch.Tensor, valid_a: torch.Tensor, image_b: torch.Tensor, depth_b: torch.Tensor, valid_b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        _, h, w = image_a.shape
+        lam = float(np.random.beta(self.cutmix_alpha, self.cutmix_alpha)) if self.cutmix_alpha > 0 else 0.5
+        cut_ratio = float(np.sqrt(1.0 - lam))
+        cut_w = max(1, int(round(w * cut_ratio)))
+        cut_h = max(1, int(round(h * cut_ratio)))
+        cx = int(torch.randint(0, w, ()).item())
+        cy = int(torch.randint(0, h, ()).item())
+        x1, x2 = max(0, cx - cut_w // 2), min(w, cx + (cut_w + 1) // 2)
+        y1, y2 = max(0, cy - cut_h // 2), min(h, cy + (cut_h + 1) // 2)
+
+        region = torch.zeros((1, h, w), dtype=torch.bool)
+        region[:, y1:y2, x1:x2] = True
+        keep_a = ~region
+
+        image = torch.where(region, image_b, image_a)
+        depth = torch.where(region, depth_b, depth_a)
+        mask_a = valid_a.bool() & keep_a
+        mask_b = valid_b.bool() & region
+        valid = (mask_a | mask_b).float()
+        loss_masks = torch.stack([mask_a[0], mask_b[0]])
+        weights = loss_masks.flatten(1).sum(dim=1).float()
+        if float(weights.sum()) > 0:
+            weights = weights / weights.sum()
+        else:
+            weights = torch.tensor([1.0, 0.0])
+        return image, depth, valid, loss_masks, weights
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor | str]:
+        image_t, depth_t, valid_t, name, normalize = self._load_sample(idx)
         if self.augmentation is not None:
+            # Apply standard paired/RGB augmentations before any sample mixing.
             image_orig, depth_orig, valid_orig = image_t, depth_t, valid_t
             image_t, depth_t, valid_t = self.augmentation(image_t, depth_t, valid_t)
             if int(valid_t.sum()) == 0 and int(valid_orig.sum()) > 0:
                 image_t, depth_t, valid_t = image_orig, depth_orig, valid_orig
+
+        loss_masks = torch.stack([valid_t[0] > 0.5, torch.zeros_like(valid_t[0], dtype=torch.bool)])
+        loss_weights = torch.tensor([1.0, 0.0])
+        if self.cutmix_prob and len(self.names) > 1 and torch.rand(()) < self.cutmix_prob:
+            # Mix in a second training sample and keep per-region supervision masks.
+            donor_idx = int(torch.randint(0, len(self.names) - 1, ()).item())
+            if donor_idx >= idx:
+                donor_idx += 1
+            image_b, depth_b, valid_b, donor_name, _ = self._load_sample(donor_idx)
+            if self.augmentation is not None:
+                # Keep donor augmentation independent from the anchor sample.
+                image_orig, depth_orig, valid_orig = image_b, depth_b, valid_b
+                image_b, depth_b, valid_b = self.augmentation(image_b, depth_b, valid_b)
+                if int(valid_b.sum()) == 0 and int(valid_orig.sum()) > 0:
+                    image_b, depth_b, valid_b = image_orig, depth_orig, valid_orig
+            image_t, depth_t, valid_t, loss_masks, loss_weights = self._cutmix(image_t, depth_t, valid_t, image_b, depth_b, valid_b)
+            name = f"{name}|cutmix|{donor_name}"
+
         if normalize:
             image_t = (image_t - IMAGENET_MEAN) / IMAGENET_STD
 
-        return {"image": image_t, "depth": depth_t[0], "valid_mask": valid_t[0] > 0.5, "name": name}
+        sample: dict[str, torch.Tensor | str] = {"image": image_t, "depth": depth_t[0], "valid_mask": valid_t[0] > 0.5, "name": name}
+        if self.cutmix_prob:
+            sample["loss_masks"] = loss_masks
+            sample["loss_weights"] = loss_weights
+        return sample
 
 
 def preprocess_da2_sample(image: np.ndarray, depth: np.ndarray, valid: np.ndarray, image_size: int, training: bool) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -166,9 +223,11 @@ def build_cil_loaders(cfg: dict[str, Any]) -> tuple[DataLoader, DataLoader, list
 
     names = rgb_names(data["root"], data.get("max_samples"))
     train_names, val_names = split_names(names, float(data.get("val_fraction", 0.05)), int(data.get("split_seed", 42)), data.get("split_file"))
-    augmentation = None if (cfg.get("augmentation") or {}).get("name", "none") == "none" else DepthAugmentation(cfg.get("augmentation"))
+    aug_cfg = cfg.get("augmentation") or {}
+    augmentation = None if aug_cfg.get("name", "none") == "none" else DepthAugmentation(aug_cfg)
+    cutmix = (aug_cfg.get("mix", {}) or {}).get("cutmix", {}) or {}
 
     train = cfg.get("train", {})
-    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
+    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation, cutmix=cutmix), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
     val_loader = DataLoader(CILDepthDataset(data["root"], val_names, model, image_size, training=False), batch_size=int(train.get("batch_size", 8)), shuffle=False, num_workers=int(train.get("num_workers", 4)), pin_memory=True)
     return train_loader, val_loader, train_names, val_names

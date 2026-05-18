@@ -7,10 +7,21 @@ from typing import Any
 import torch
 
 from models.da2 import build_da2, load_training_checkpoint
+from models.da2_refine import build_da2_unet_refine
 from models.unet import UNetBaseline
 
 
 def load_model_for_inference(cfg: dict[str, Any], checkpoint: str | None, device: torch.device) -> torch.nn.Module:
+    if cfg["model"] == "da2_unet_refine":
+        if not checkpoint:
+            raise ValueError("DA2 U-Net refinement inference requires --checkpoint")
+        ckpt = Path(os.path.expanduser(os.path.expandvars(checkpoint)))
+        payload = torch.load(ckpt, map_location="cpu")
+        if isinstance(payload, dict) and payload.get("format") == "trainable_only":
+            cfg.setdefault("paths", {})["checkpoint"] = payload["base_checkpoint"]
+        model, _ = build_da2_unet_refine(cfg)
+        load_training_checkpoint(model, ckpt)
+        return model.to(device).eval()
     if checkpoint:
         cfg.setdefault("paths", {})["checkpoint"] = os.path.expanduser(os.path.expandvars(checkpoint))
     if str(cfg["model"]).startswith("da2_"):

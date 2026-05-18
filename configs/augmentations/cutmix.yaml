@@ -1,0 +1,18 @@
+name: cutmix
+paired_spatial:
+  hflip:
+    enabled: false
+  rotation:
+    enabled: false
+  crop:
+    enabled: false
+  tilt:
+    mode: none
+rgb_only:
+  color_jitter:
+    enabled: false
+mix:
+  cutmix:
+    enabled: true
+    prob: 0.5
+    alpha: 1.0

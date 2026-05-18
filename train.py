@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 from dataset.data_loader import build_cil_loaders
 from utils.eval import evaluate_names
 from models.da2 import build_da2
+from models.da2_refine import build_da2_unet_refine
 from models.unet import UNetBaseline
 from utils.loss import sirmse
 from utils import DEFAULT_CONFIG, apply_overrides, load_config, make_run_dir, maybe_wandb, save_json, save_yaml, seed_everything, setup_logging
@@ -54,6 +55,8 @@ def parse_args() -> argparse.Namespace:
 
 def build_model(cfg: dict[str, Any]) -> tuple[torch.nn.Module, Path | None]:
     model_name = cfg["model"]
+    if model_name == "da2_unet_refine":
+        return build_da2_unet_refine(cfg)
     if isinstance(model_name, str) and model_name.startswith("da2_"):
         return build_da2(cfg)
     if model_name == "unet":
@@ -74,6 +77,22 @@ def forward_on_depth_grid(model: torch.nn.Module, image: torch.Tensor, depth: to
 
 def batch_sirmse_loss(pred_depth: torch.Tensor, depth: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
     losses = [sirmse(pred_depth[i], depth[i], valid[i]) for i in range(depth.shape[0])]
+    return torch.stack(losses).mean()
+
+
+def batch_region_sirmse_loss(pred_depth: torch.Tensor, depth: torch.Tensor, loss_masks: torch.Tensor, loss_weights: torch.Tensor) -> torch.Tensor:
+    losses = []
+    for i in range(depth.shape[0]):
+        sample_losses = []
+        sample_weights = []
+        for j in range(loss_masks.shape[1]):
+            if int(loss_masks[i, j].sum()) == 0 or float(loss_weights[i, j]) <= 0:
+                continue
+            sample_losses.append(sirmse(pred_depth[i], depth[i], loss_masks[i, j]))
+            sample_weights.append(loss_weights[i, j])
+        weights = torch.stack(sample_weights)
+        weights = weights / weights.sum().clamp_min(1e-6)
+        losses.append((torch.stack(sample_losses) * weights).sum())
     return torch.stack(losses).mean()
 
 
@@ -195,8 +214,15 @@ def main() -> None:
             image = batch["image"].to(device)
             depth = batch["depth"].to(device)
             valid = batch["valid_mask"].to(device)
+            loss_masks = batch.get("loss_masks")
+            loss_weights = batch.get("loss_weights")
             with torch.cuda.amp.autocast(enabled=amp):
-                loss = batch_sirmse_loss(forward_on_depth_grid(model, image, depth, invert_output), depth, valid) / grad_accum
+                pred = forward_on_depth_grid(model, image, depth, invert_output)
+                if loss_masks is not None and loss_weights is not None:
+                    # CutMix regions get separate siRMSE normalization.
+                    loss = batch_region_sirmse_loss(pred, depth, loss_masks.to(device), loss_weights.to(device)) / grad_accum
+                else:
+                    loss = batch_sirmse_loss(pred, depth, valid) / grad_accum
             scaler.scale(loss).backward()
             loss_value = float(loss.item() * grad_accum)
             if step % grad_accum == 0 or step == len(train_loader):
