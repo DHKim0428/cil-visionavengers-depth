@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Predict CIL test depth maps")
     p.add_argument("--config", default=DEFAULT_CONFIG)
     p.add_argument("--checkpoint")
-    p.add_argument("--model", choices=["da2_vits", "da2_vitb", "da2_vitl", "da2_unet_refine", "unet"])
+    p.add_argument("--model", choices=["da2_vits", "da2_vitb", "da2_vitl", "da2_unet_refine", "unet", "unet_disp"])
     p.add_argument("--test-root", default=DEFAULT_TEST_ROOT)
     p.add_argument("--output-dir")
     p.add_argument("--submission-csv")

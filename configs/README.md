@@ -14,8 +14,9 @@ python eval.py --config configs/experiments/da2_vits_zero_shot.yaml
 Important sections:
 
 - `experiment`: run name
-- `model`: one plain string: `da2_vits`, `da2_vitb`, `da2_vitl`, or `unet`
+- `model`: one plain string: `da2_vits`, `da2_vitb`, `da2_vitl`, `unet`, or `unet_disp`
 - `trainable`: DA2 scope: `frozen`, `full`, `decoder`, or `refinenets_output`
+- `refiner`: optional `unet_disp` settings, including `conditioning: rgb | prior | prior_features`
 - `adapter`: optional PEFT LoRA settings
 - `data`: dataset root, split, image size
 - `augmentation`: preset name such as `none` or `basic`

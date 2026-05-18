@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 from models.da2 import build_da2, load_training_checkpoint
-from models.da2_refine import build_da2_unet_refine
+from models.da2_refine import build_da2_unet_refine, build_unet_disp
 from models.unet import UNetBaseline
 
 
@@ -20,6 +20,16 @@ def load_model_for_inference(cfg: dict[str, Any], checkpoint: str | None, device
         if isinstance(payload, dict) and payload.get("format") == "trainable_only":
             cfg.setdefault("paths", {})["checkpoint"] = payload["base_checkpoint"]
         model, _ = build_da2_unet_refine(cfg)
+        load_training_checkpoint(model, ckpt)
+        return model.to(device).eval()
+    if cfg["model"] == "unet_disp":
+        if not checkpoint:
+            raise ValueError("U-Net disparity inference requires --checkpoint")
+        ckpt = Path(os.path.expanduser(os.path.expandvars(checkpoint)))
+        payload = torch.load(ckpt, map_location="cpu")
+        if isinstance(payload, dict) and payload.get("format") == "trainable_only" and payload.get("base_checkpoint"):
+            cfg.setdefault("paths", {})["checkpoint"] = payload["base_checkpoint"]
+        model, _ = build_unet_disp(cfg)
         load_training_checkpoint(model, ckpt)
         return model.to(device).eval()
     if checkpoint:

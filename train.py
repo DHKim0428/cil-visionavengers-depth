@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 from dataset.data_loader import build_cil_loaders
 from utils.eval import evaluate_names
 from models.da2 import build_da2
-from models.da2_refine import build_da2_unet_refine
+from models.da2_refine import build_da2_unet_refine, build_unet_disp
 from models.unet import UNetBaseline
 from utils.loss import sirmse
 from utils import DEFAULT_CONFIG, apply_overrides, load_config, make_run_dir, maybe_wandb, save_json, save_yaml, seed_everything, setup_logging
@@ -59,6 +59,8 @@ def build_model(cfg: dict[str, Any]) -> tuple[torch.nn.Module, Path | None]:
         return build_da2_unet_refine(cfg)
     if isinstance(model_name, str) and model_name.startswith("da2_"):
         return build_da2(cfg)
+    if model_name == "unet_disp":
+        return build_unet_disp(cfg)
     if model_name == "unet":
         return UNetBaseline(), None
     raise ValueError(f"Unknown model: {model_name}")
@@ -98,8 +100,8 @@ def batch_region_sirmse_loss(pred_depth: torch.Tensor, depth: torch.Tensor, loss
 
 def save_checkpoint(path: Path, cfg: dict[str, Any], model: torch.nn.Module, optimizer, scaler, epoch: int, global_step: int, best: float, val: float, base_ckpt: Path | None, include_optimizer: bool) -> None:
     policy = cfg.get("checkpoint", {}).get("save_policy", "trainable_only")
-    if policy == "trainable_only" and str(cfg["model"]).startswith("da2_"):
-        payload = {"format": "trainable_only", "trainable": {name: p.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}, "base_checkpoint": str(base_ckpt)}
+    if policy == "trainable_only" and (str(cfg["model"]).startswith("da2_") or cfg["model"] == "unet_disp"):
+        payload = {"format": "trainable_only", "trainable": {name: p.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}, "base_checkpoint": str(base_ckpt) if base_ckpt else None}
     else:
         payload = {"format": "full_model", "model": {k: v.detach().cpu() for k, v in model.state_dict().items()}}
     payload.update({"config": cfg, "epoch": epoch, "global_step": global_step, "best_sirmse": best, "val_sirmse": val})
@@ -166,7 +168,7 @@ def main() -> None:
     train_loader, _, train_names, val_names = build_cil_loaders(cfg)
     model, base_ckpt = build_model(cfg)
     model.to(device)
-    invert_output = str(cfg["model"]).startswith("da2_")
+    invert_output = str(cfg["model"]).startswith("da2_") or cfg["model"] == "unet_disp"
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     counts = {"total": total, "trainable": trainable, "frozen": total - trainable, "trainable_pct": 100.0 * trainable / total if total else 0.0}

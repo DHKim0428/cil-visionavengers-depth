@@ -26,22 +26,27 @@ def load_rgb_depth(data_root: str | Path, name: str) -> tuple[np.ndarray, np.nda
 
 def preprocess_eval_image(image_rgb: np.ndarray, cfg: dict[str, Any], device: torch.device) -> torch.Tensor:
     model_name = cfg["model"]
-    size = int(cfg.get("data", {}).get("image_size", 518 if str(model_name).startswith("da2_") else 128))
+    size = int(cfg.get("data", {}).get("image_size", 518 if (str(model_name).startswith("da2_") or model_name == "unet_disp") else 128))
+    input_profile = "unet"
+    if str(model_name).startswith("da2_"):
+        input_profile = "da2"
+    elif model_name == "unet_disp" and str((cfg.get("refiner") or {}).get("conditioning", "rgb")) in {"prior", "prior_features"}:
+        input_profile = "da2"
     image = image_rgb.astype(np.float32) / 255.0
 
-    if str(model_name).startswith("da2_"):
+    if input_profile == "da2":
         h, w = image.shape[:2]
         scale = max(size / h, size / w)
         new_w = int(np.ceil((w * scale) / 14) * 14)
         new_h = int(np.ceil((h * scale) / 14) * 14)
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-    elif model_name == "unet":
+    elif input_profile == "unet":
         image = cv2.resize(image, (size, size), interpolation=cv2.INTER_LINEAR)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
     x = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1))).float()
-    if str(model_name).startswith("da2_"):
+    if input_profile == "da2":
         x = (x - IMAGENET_MEAN) / IMAGENET_STD
     return x[None].to(device)
 
@@ -49,15 +54,17 @@ def preprocess_eval_image(image_rgb: np.ndarray, cfg: dict[str, Any], device: to
 def predict_depth_for_eval(model: torch.nn.Module, image_rgb: np.ndarray, gt_shape: tuple[int, int], cfg: dict[str, Any], device: torch.device) -> torch.Tensor:
     # Uses only RGB plus the required output grid shape. No GT depth values enter prediction.
     x = preprocess_eval_image(image_rgb, cfg, device)
-    raw = model(x)
+    amp = bool(cfg.get("train", {}).get("amp", False)) and device.type == "cuda"
+    with torch.cuda.amp.autocast(enabled=amp):
+        raw = model(x)
     if raw.ndim == 4 and raw.shape[1] == 1:
         raw = raw[:, 0]
 
-    if str(cfg["model"]).startswith("da2_"):
-        pred_inv_depth = raw[0]
+    if str(cfg["model"]).startswith("da2_") or cfg["model"] == "unet_disp":
+        pred_inv_depth = raw[0].float()
         pred_depth = 1.0 / pred_inv_depth.clamp_min(1e-6)
     else:
-        pred_depth = raw[0]
+        pred_depth = raw[0].float()
 
     if pred_depth.shape != gt_shape:
         pred_depth = F.interpolate(pred_depth[None, None], size=gt_shape, mode="bilinear", align_corners=False)[0, 0]

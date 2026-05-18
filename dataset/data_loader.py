@@ -17,10 +17,11 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 class CILDepthDataset(Dataset):
-    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None, cutmix: dict[str, Any] | None = None, teacher_mask: TeacherMaskSpec | None = None) -> None:
+    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None, cutmix: dict[str, Any] | None = None, teacher_mask: TeacherMaskSpec | None = None, input_profile: str | None = None) -> None:
         self.root = Path(data_root)
         self.names = names
         self.model = model
+        self.input_profile = input_profile or ("da2" if model.startswith("da2_") else "unet")
         self.image_size = int(image_size)
         self.training = training
         self.augmentation = augmentation
@@ -47,14 +48,14 @@ class CILDepthDataset(Dataset):
                 raise ValueError(f"Teacher mask shape mismatch for {name}: got {teacher_mask.shape}, expected {valid.shape}")
             valid = valid & teacher_mask
 
-        if self.model.startswith("da2_"):
+        if self.input_profile == "da2":
             image, depth, valid = preprocess_da2_sample(image, depth, valid, self.image_size, self.training)
             normalize = True
-        elif self.model == "unet":
+        elif self.input_profile == "unet":
             image, depth, valid = preprocess_unet_sample(image, depth, valid, self.image_size, self.training)
             normalize = False
         else:
-            raise ValueError(f"Unknown model: {self.model}")
+            raise ValueError(f"Unknown input profile for {self.model}: {self.input_profile}")
 
         image_t = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1))).float()
         depth_t = torch.from_numpy(np.ascontiguousarray(depth))[None].float()
@@ -226,7 +227,7 @@ def split_names(names: list[str], val_fraction: float, seed: int, split_file: st
 def build_cil_loaders(cfg: dict[str, Any]) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
     data = cfg["data"]
     model = cfg["model"]
-    image_size = int(data.get("image_size", 518 if str(model).startswith("da2_") else 128))
+    image_size = int(data.get("image_size", 518 if (str(model).startswith("da2_") or model == "unet_disp") else 128))
 
     names = rgb_names(data["root"], data.get("max_samples"))
     train_names, val_names = split_names(names, float(data.get("val_fraction", 0.05)), int(data.get("split_seed", 42)), data.get("split_file"))
@@ -238,6 +239,12 @@ def build_cil_loaders(cfg: dict[str, Any]) -> tuple[DataLoader, DataLoader, list
         validate_teacher_masks(teacher_mask, data["root"], train_names)
 
     train = cfg.get("train", {})
-    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation, cutmix=cutmix, teacher_mask=teacher_mask), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
-    val_loader = DataLoader(CILDepthDataset(data["root"], val_names, model, image_size, training=False), batch_size=int(train.get("batch_size", 8)), shuffle=False, num_workers=int(train.get("num_workers", 4)), pin_memory=True)
+    input_profile = "unet"
+    if str(model).startswith("da2_"):
+        input_profile = "da2"
+    elif model == "unet_disp" and str((cfg.get("refiner") or {}).get("conditioning", "rgb")) in {"prior", "prior_features"}:
+        input_profile = "da2"
+
+    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation, cutmix=cutmix, teacher_mask=teacher_mask, input_profile=input_profile), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
+    val_loader = DataLoader(CILDepthDataset(data["root"], val_names, model, image_size, training=False, input_profile=input_profile), batch_size=int(train.get("batch_size", 8)), shuffle=False, num_workers=int(train.get("num_workers", 4)), pin_memory=True)
     return train_loader, val_loader, train_names, val_names
