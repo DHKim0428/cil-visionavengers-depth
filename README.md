@@ -29,6 +29,15 @@ bash scripts/setup_da2.sh
 
 If `conda_cil` is not available, see `docs/environment_setup.md`.
 
+Optional DA3 teacher-mask filtering is an offline data-cleaning step. To prepare
+DA3 assets for mask precomputation, run:
+
+```bash
+bash scripts/setup_da3.sh
+```
+
+See `dataset/da3/README.md` for the filtering workflow and artifact contract.
+
 ## Main commands
 
 Python entrypoints live at the repository root:

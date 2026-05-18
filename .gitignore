@@ -57,3 +57,6 @@ splits/
 
 # Agent local memory
 AGENT_WORKBOOK.md
+
+# External source checkouts
+/external/Depth-Anything-3/

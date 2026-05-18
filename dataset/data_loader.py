@@ -10,19 +10,21 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from dataset.data_augment import DepthAugmentation
+from dataset.supervision import TeacherMaskSpec, load_teacher_mask, validate_teacher_masks
 
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 class CILDepthDataset(Dataset):
-    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None, cutmix: dict[str, Any] | None = None) -> None:
+    def __init__(self, data_root: str | Path, names: list[str], model: str, image_size: int, training: bool, augmentation: DepthAugmentation | None = None, cutmix: dict[str, Any] | None = None, teacher_mask: TeacherMaskSpec | None = None) -> None:
         self.root = Path(data_root)
         self.names = names
         self.model = model
         self.image_size = int(image_size)
         self.training = training
         self.augmentation = augmentation
+        self.teacher_mask = teacher_mask if training else None
         cutmix = cutmix or {}
         self.cutmix_prob = float(cutmix.get("prob", 0.0)) if cutmix.get("enabled", False) and training else 0.0
         self.cutmix_alpha = float(cutmix.get("alpha", 1.0))
@@ -39,6 +41,11 @@ class CILDepthDataset(Dataset):
         image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         depth = np.load(self.root / name.replace("_rgb.png", "_depth.npy")).astype(np.float32)
         valid = np.isfinite(depth) & (depth >= 0.001) & (depth <= 80.0)
+        if self.teacher_mask is not None:
+            teacher_mask = load_teacher_mask(self.teacher_mask, name)
+            if teacher_mask.shape != valid.shape:
+                raise ValueError(f"Teacher mask shape mismatch for {name}: got {teacher_mask.shape}, expected {valid.shape}")
+            valid = valid & teacher_mask
 
         if self.model.startswith("da2_"):
             image, depth, valid = preprocess_da2_sample(image, depth, valid, self.image_size, self.training)
@@ -226,8 +233,11 @@ def build_cil_loaders(cfg: dict[str, Any]) -> tuple[DataLoader, DataLoader, list
     aug_cfg = cfg.get("augmentation") or {}
     augmentation = None if aug_cfg.get("name", "none") == "none" else DepthAugmentation(aug_cfg)
     cutmix = (aug_cfg.get("mix", {}) or {}).get("cutmix", {}) or {}
+    teacher_mask = TeacherMaskSpec.from_config((cfg.get("supervision") or {}).get("teacher_mask"))
+    if teacher_mask is not None:
+        validate_teacher_masks(teacher_mask, data["root"], train_names)
 
     train = cfg.get("train", {})
-    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation, cutmix=cutmix), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
+    train_loader = DataLoader(CILDepthDataset(data["root"], train_names, model, image_size, training=True, augmentation=augmentation, cutmix=cutmix, teacher_mask=teacher_mask), batch_size=int(train.get("batch_size", 8)), shuffle=True, num_workers=int(train.get("num_workers", 4)), pin_memory=True, drop_last=True)
     val_loader = DataLoader(CILDepthDataset(data["root"], val_names, model, image_size, training=False), batch_size=int(train.get("batch_size", 8)), shuffle=False, num_workers=int(train.get("num_workers", 4)), pin_memory=True)
     return train_loader, val_loader, train_names, val_names

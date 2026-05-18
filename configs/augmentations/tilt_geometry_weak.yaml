@@ -1,0 +1,17 @@
+name: tilt_geometry_weak
+paired_spatial:
+  hflip:
+    enabled: false
+  rotation:
+    enabled: false
+  crop:
+    enabled: false
+  tilt:
+    mode: geometry
+    prob: 0.25
+    max_yaw_deg: 3.0
+    max_pitch_deg: 3.0
+    fov_deg: 60.0
+rgb_only:
+  color_jitter:
+    enabled: false
