@@ -104,17 +104,26 @@ def evaluate_names(model: torch.nn.Module, cfg: dict[str, Any], names: list[str]
         if save_images > 0 and len(image_paths) < save_images:
             valid = np.isfinite(gt) & (gt >= MIN_DEPTH) & (gt <= MAX_DEPTH)
             rgb_small = cv2.resize(image, (gt.shape[1], gt.shape[0]), interpolation=cv2.INTER_AREA)
-            pred_np = pred.detach().cpu().numpy()
+            pred_np = pred.detach().cpu().numpy().astype(np.float32)
             gt_vis = np.zeros((*gt.shape, 3), dtype=np.uint8)
             pred_vis = np.zeros((*gt.shape, 3), dtype=np.uint8)
             if valid.any():
+                pred_vis_np = pred_np.copy()
+                pred_valid = valid & np.isfinite(pred_vis_np) & (pred_vis_np > 0)
+                if pred_valid.any():
+                    gt_median = float(np.median(gt[pred_valid]))
+                    pred_median = float(np.median(pred_vis_np[pred_valid]))
+                    if gt_median > 0 and pred_median > 0:
+                        pred_vis_np *= gt_median / pred_median
+
                 lo, hi = np.percentile(gt[valid], [2, 98])
                 hi = hi if hi > lo else lo + 1.0
                 gt_u8 = np.clip((gt - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
-                pred_u8 = np.clip((pred_np - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
+                pred_u8 = np.clip((pred_vis_np - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
                 gt_vis = cv2.cvtColor(cv2.applyColorMap(gt_u8, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
                 pred_vis = cv2.cvtColor(cv2.applyColorMap(pred_u8, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
                 gt_vis[~valid] = 0
+                pred_vis[~valid] = 0
             panel = np.concatenate([rgb_small, gt_vis, pred_vis], axis=1)
             path = Path(image_dir) / f"{Path(name).stem}_sirmse_{float(score.item()):.4f}.png"
             cv2.imwrite(str(path), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))

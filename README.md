@@ -54,6 +54,38 @@ sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_refinenets_output.yaml,R
 sbatch --export=ALL,CONFIG=configs/experiments/da2_vits_zero_shot.yaml,RUN_NAME=da2_eval scripts/slurm/eval.sbatch
 ```
 
+## Qualitative Visualization
+
+To save fixed validation examples instead of running a full visual sweep, pass a
+sample list and `SAVE_IMAGES`. The saved panels are `RGB | GT | prediction`; the
+prediction panel is median-aligned to GT for display and uses the GT valid mask.
+
+```bash
+sbatch --export=ALL,\
+CONFIG=configs/experiments/da2_vits_zero_shot.yaml,\
+SPLIT_FILE=configs/splits/cil_depth_val_05pct_seed42.json,\
+SAMPLE_FILE=configs/splits/val_vis_3_seed20260519.txt,\
+SAVE_IMAGES=3,AMP=1,NO_WANDB=1,\
+RUN_NAME=val_fixed3_da2_zero_shot,\
+OUTPUT_DIR=visualizations/val_fixed3/da2_zero_shot \
+scripts/slurm/eval.sbatch
+```
+
+Use the same `SAMPLE_FILE` and a different config/checkpoint/output directory to
+compare models on identical validation images. For trained runs, pass the
+checkpoint explicitly:
+
+```bash
+sbatch --export=ALL,\
+CONFIG=configs/experiments/da2_vits_lora_decoder_518_5pct_da3clean_p95_noaug.yaml,\
+CHECKPOINT=/work/scratch/$USER/cil-visionavengers-depth/checkpoints/<run>/<timestamp>/best.pth,\
+SAMPLE_FILE=configs/splits/val_vis_3_seed20260519.txt,\
+SAVE_IMAGES=3,AMP=1,NO_WANDB=1,\
+RUN_NAME=val_fixed3_da3clean_p95_lora,\
+OUTPUT_DIR=visualizations/val_fixed3/da3clean_p95_lora \
+scripts/slurm/eval.sbatch
+```
+
 ## Evaluation semantics
 
 The canonical metric is implemented locally from `docs/project_spec.md`:

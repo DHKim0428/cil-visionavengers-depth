@@ -26,10 +26,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir")
     p.add_argument("--img-size", type=int)
     p.add_argument("--split-file")
+    p.add_argument("--sample-file")
     p.add_argument("--val-fraction", type=float)
     p.add_argument("--max-samples", type=int)
     p.add_argument("--fraction", type=float)
     p.add_argument("--save-images", type=int, default=0)
+    p.add_argument("--amp", action="store_true", help="Force AMP during eval forward on CUDA")
     p.add_argument("--scale-depth-percentile", action="store_true")
     p.add_argument("--scale-percentile", type=float, default=99.0)
     p.add_argument("--scale-target", type=float, default=80.0)
@@ -51,6 +53,7 @@ def main() -> None:
         "data.split_file": args.split_file,
         "data.val_fraction": args.val_fraction,
         "data.max_samples": args.max_samples,
+        "train.amp": True if args.amp else None,
     })
     out = Path(args.output_dir) if args.output_dir else Path(cfg.get("paths", {}).get("output_root", "runs")).parent / "evaluations" / cfg.get("experiment", {}).get("name", "eval") / timestamp()
     print(f"config={args.config}")
@@ -66,6 +69,18 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model_for_inference(cfg, args.checkpoint, device)
     val_names = validation_names(cfg)
+    if args.sample_file:
+        sample_path = Path(args.sample_file)
+        requested = [
+            line.strip()
+            for line in sample_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        val_set = set(val_names)
+        missing = [name for name in requested if name not in val_set]
+        if missing:
+            raise ValueError(f"Sample file contains names outside the validation split; first missing: {missing[0]}")
+        val_names = requested
     if args.fraction:
         rng = np.random.default_rng(int(cfg["data"].get("split_seed", 42)))
         idx = sorted(rng.choice(len(val_names), size=max(1, int(len(val_names) * args.fraction)), replace=False))

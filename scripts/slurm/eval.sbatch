@@ -56,6 +56,9 @@ fi
 if [[ -n "${SPLIT_FILE:-}" ]]; then
     ARGS+=(--split-file "$SPLIT_FILE")
 fi
+if [[ -n "${SAMPLE_FILE:-}" ]]; then
+    ARGS+=(--sample-file "$SAMPLE_FILE")
+fi
 if [[ -n "${VAL_FRACTION:-}" ]]; then
     ARGS+=(--val-fraction "$VAL_FRACTION")
 fi
@@ -67,6 +70,9 @@ if [[ -n "${FRACTION:-}" ]]; then
 fi
 if [[ -n "${SAVE_IMAGES:-}" ]]; then
     ARGS+=(--save-images "$SAVE_IMAGES")
+fi
+if [[ "${AMP:-0}" == "1" ]]; then
+    ARGS+=(--amp)
 fi
 if [[ "${SCALE_DEPTH_PERCENTILE:-0}" == "1" ]]; then
     ARGS+=(--scale-depth-percentile)

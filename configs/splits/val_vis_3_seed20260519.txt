@@ -1,0 +1,6 @@
+# Fixed random validation samples for qualitative comparison.
+# Source split: configs/splits/cil_depth_val_05pct_seed42.json
+# Sample seed: 20260519
+train_007185_rgb.png
+train_013938_rgb.png
+train_022460_rgb.png
